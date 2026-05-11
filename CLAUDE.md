@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ### Run both servers
-From the repo root: `npm start` — uses `concurrently` to launch the backend (uvicorn, port 8000) and the frontend (Vite) in one terminal with prefixed output. The script assumes `backend/venv` and `frontend/node_modules` are already populated. Individual halves are available as `npm run start:backend` and `npm run start:frontend`.
+From the repo root: `npm start` — runs `scripts/setup.js`, which verifies that Node ≥ 20, npm ≥ 9, and Python ≥ 3.10 are installed; bootstraps any missing packages (`backend/venv`, `frontend/node_modules`, root `node_modules`); then launches both servers via `concurrently` with platform-aware paths (arm64 prefix on Apple Silicon, `venv\Scripts\` on Windows, `venv/bin/` elsewhere). Run `npm run setup` for the check-and-install steps without launching. Individual halves are still exposed as `npm run start:backend` / `npm run start:frontend`.
 
 ### Run tests
 From the repo root: `npm test` — runs the backend (pytest) and frontend (vitest) suites concurrently. `npm run test:backend` and `npm run test:frontend` run each side independently.

@@ -230,8 +230,15 @@ export default function GalleryView() {
           <button
             onClick={handleDownload}
             disabled={!currentBranch || keptTotal === 0}
-            className="btn btn-primary"
-            style={{ padding: '0.4rem 0.85rem', fontSize: '0.85rem' }}
+            className="btn"
+            style={{
+              padding: '0.4rem 0.85rem',
+              fontSize: '0.85rem',
+              background: 'var(--accent-keep)',
+              borderColor: 'var(--accent-keep)',
+              color: '#062c17',
+              fontWeight: 600,
+            }}
             title={keptTotal === 0 ? 'Mark some photos as kept first' : 'Download kept photos as ZIP'}
           >
             <Download size={16} /> Download kept

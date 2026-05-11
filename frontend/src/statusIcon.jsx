@@ -3,7 +3,7 @@ import { Check, X, Star, Clock, Trash2 } from 'lucide-react';
 
 export const STATUS_COLOR = {
   keep: 'var(--accent-keep)',
-  best: 'var(--accent-keep)',
+  best: 'var(--accent-best)',
   reject: 'var(--accent-reject)',
   skip: 'var(--accent-skip)',
   trash: 'var(--accent-reject)',

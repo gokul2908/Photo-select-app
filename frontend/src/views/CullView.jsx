@@ -362,6 +362,12 @@ export default function CullView() {
             <button onClick={goBack} className="btn" style={{ background: 'rgba(0,0,0,0.6)' }}>
               <ArrowLeft size={16} /> <span className="cull-hud-text">Back</span>
             </button>
+          </div>
+          <div className="cull-hud-right">
+            <div className="cull-hud-counter">
+              {visibleIndex + 1} <span style={{ color: 'var(--text-secondary)' }}>/ {visiblePhotos.length}</span>
+            </div>
+            <div className="cull-hud-keep">{keeps} <span className="cull-hud-text">Kept</span></div>
             <button
               onClick={() => setIsRailOpen((v) => !v)}
               className="btn"
@@ -371,20 +377,14 @@ export default function CullView() {
               {isRailOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
             </button>
           </div>
-          <div className="cull-hud-right">
-            <div className="cull-hud-counter">
-              {visibleIndex + 1} <span style={{ color: 'var(--text-secondary)' }}>/ {visiblePhotos.length}</span>
-            </div>
-            <div className="cull-hud-keep">{keeps} <span className="cull-hud-text">Kept</span></div>
-          </div>
         </div>
 
         {/* No-branch banner */}
         {!currentBranch && (
           <div style={{
             position: 'absolute', top: 80, left: '50%', transform: 'translateX(-50%)', zIndex: 11,
-            background: 'rgba(245, 158, 11, 0.15)', border: '1px solid var(--accent-skip)',
-            color: 'var(--accent-skip)', padding: '0.5rem 1rem', borderRadius: 'var(--border-radius-sm)',
+            background: 'rgba(245, 158, 11, 0.15)', border: '1px solid var(--accent-warning)',
+            color: 'var(--accent-warning)', padding: '0.5rem 1rem', borderRadius: 'var(--border-radius-sm)',
             fontSize: '0.85rem',
           }}>
             No branch selected — decisions will not be saved. Go to Library and pick a branch.
