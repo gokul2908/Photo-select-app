@@ -1,0 +1,107 @@
+Good — those answers actually simplify things a lot. Desktop culling of a shoot is the *classic* use case for this kind of tool (think Photo Mechanic, FastRawViewer), and time-based burst detection is the most reliable auto-grouping signal. Let me give you a complete design.
+
+## Architecture
+
+**Local Python server (FastAPI) + web UI (React + Vite).** Why this split:
+
+- Python handles what it's good at: walking directories, reading EXIF, generating thumbnails, hashing for similarity, SQLite for the branch/commit graph.
+- The browser handles what it's good at: fast keyboard/mouse interaction, smooth image rendering, no install friction.
+- They talk over `localhost`. The server serves thumbnails on demand and exposes a small REST + WebSocket API. Photos never leave the user's machine.
+
+The server is the source of truth. The UI is a thin client. This means you could later add a mobile companion, CLI, or anything else without rewriting state logic.
+
+## Data model — the important part
+
+This is where the git-flow lives. Three tables in SQLite:
+
+**`photos`** — one row per photo file ever imported. Immutable. Stores absolute path, content hash (SHA-256 of file), EXIF timestamp, dimensions, group_id. Photos are *never* duplicated, *never* moved, *never* deleted by the app. This is the read-only source of truth, like git's object store.
+
+**`branches`** — name, parent_branch_id, parent_commit_id (the commit it branched from), head_commit_id. A linear chain of commits per branch, just like git.
+
+**`commits`** — id, branch_id, parent_commit_id, timestamp, action_type, payload. The payload is a small JSON describing what happened: `{photo_id: 42, decision: "keep"}` or `{group_id: 7, kept: 42, rejected: [43,44,45]}` for a group decision.
+
+**The current state of any branch is computed by replaying its commits** from the root. This is exactly how git works and it's what gives you undo, branching, and "view rejected on old branch" essentially for free:
+
+- **Undo** = move HEAD back one commit. The commit isn't deleted; if you make a new decision, it forks (just like git).
+- **View rejected on branch X** = replay branch X's commits, filter where decision == reject.
+- **Restore a rejected photo** = cherry-pick: create a new commit on current branch with `{photo_id: 42, decision: "keep"}`. The replay engine sees the newer commit wins.
+- **Branch off** = new branch row with parent_commit_id = wherever you are now.
+
+You never mutate history. You only append. This is the whole trick.
+
+## Grouping (auto by time)
+
+On import, sort photos by EXIF timestamp. Walk the sorted list; whenever the gap between consecutive photos is less than a threshold (default 3 seconds, user-adjustable), they're in the same group. Single-photo groups are fine — they just don't show the "best of" UI affordance.
+
+Optionally augment with a perceptual hash (pHash) on the thumbnail — if two adjacent photos have hash distance under a threshold, definitely same group even if timestamps drift. This catches bursts where the camera clock has weird gaps.
+
+## Screen flow
+
+Four screens, kept minimal:
+
+**Library** — pick a folder (or several), import. Shows progress as thumbnails generate. Lets you pick which branch to work on or create a new one.
+
+**Cull** — the swipe screen. Big photo center, thumbnail strip of the current group at the bottom (so you see the bursts visually), keyboard shortcuts: `→` keep, `←` reject, `↑` mark best, `↓` skip, `z` undo, `space` next group. Mouse drag works too for the swipe feel you wanted. Status bar shows `branch: trip-2024 · 247/1832 · 89 keeps · 18 skipped`.
+
+**Branches** — visual tree of your branches and commits. Click a branch to switch. Toggle "show rejected only" to get the view-deleted-photos-from-old-branch behavior. From here you can right-click a rejected photo → "restore to current branch."
+
+**Export** — once you're happy with a branch, export the keeps. Three modes: copy to a new folder, generate an XMP sidecar with star ratings (Lightroom/Capture One read these), or write a flat list of paths. *Never* delete originals from this screen without an explicit "I understand" checkbox.
+
+## A few decisions I'm making for you (push back if wrong)
+
+- **Skipped photos are a real state.** Down-swipe = skip. They reappear at the end of the session in a "decide these" pass. Forcing a binary keep/reject when you're unsure leads to bad culls.
+- **One "best" per group, optional.** You're not required to mark a best; if you don't, all keeps in the group are equal. If you do mark one, the others in the group are auto-rejected unless you explicitly keep them.
+- **Thumbnails are pre-generated**, stored in a `.photocull/` folder next to your library or in app data. Two sizes: 256px for strips, 1600px for the main view. Original RAW files are only opened on demand (e.g., zoom to 1:1).
+- **No actual file deletion, ever, by default.** Rejection is metadata. Export-with-delete is a separate, scary, confirmation-gated action.
+
+## Want me to start building?
+
+I can put together a runnable skeleton with the FastAPI server, SQLite schema, the commit-replay engine, and the swipe screen wired up. Before I do, two last things to nail down:Once you pick, I'll either draw you the architecture, hand you a skeleton, or build the prototype.
+
+Good calls — JPEG-only keeps the first version focused, and seeing the structure before code will save us refactor pain. Let me draw three things: the system architecture, the data model, and the commit-replay logic that makes the git-flow actually work.Three layers, one direction of trust. The browser asks the server for things (thumbnails, branch state, "record this swipe"); the server is the only thing that touches the disk. Originals are read-only — the server never writes back to your photo folders. All decisions live in SQLite alongside a thumbnail cache.
+
+Now the data model. This is the part that earns the "git-flow" name:Four tables. The key thing to internalize: **`commits` is the only table that records decisions**. `photos` and `groups` are the static "what exists" layer; `branches` and `commits` are the dynamic "what you decided" layer.
+
+A `commits.payload` looks like one of these:
+
+```json
+{"action_type": "decide",  "payload": {"photo_id": 42, "decision": "keep"}}
+{"action_type": "decide",  "payload": {"photo_id": 42, "decision": "reject"}}
+{"action_type": "decide",  "payload": {"photo_id": 42, "decision": "skip"}}
+{"action_type": "best",    "payload": {"group_id": 7, "best_photo_id": 42, "auto_reject": [43,44,45]}}
+{"action_type": "restore", "payload": {"photo_id": 99, "from_branch": 2, "from_commit": 51}}
+```
+
+That's the entire vocabulary. Every UI action — swipe, undo, branch, cherry-pick — boils down to appending one of these.
+
+Finally, the part that's worth seeing in motion: how the commit graph evolves and how state is computed from it.Click through the five steps. Pay attention to step 3 in particular — that's the moment where "branch off" stops being a vague idea and becomes concrete: a branch is just a row pointing at a commit, and its state is whatever you get when you replay the commits reachable from there.
+
+A few things this design gets you almost for free, which is why it's worth the upfront structure:
+
+The **undo button** is identical to **switching to a parent commit** — both just move HEAD backwards. There's no special "undo state" to maintain.
+
+**"Show me only the rejected photos from this old branch"** is a SQL query: replay the branch, filter where current state is `reject`. No extra storage, no caching. It's always correct because it's derived.
+
+**Restoring a rejected photo** is a regular commit, so it's itself undoable, branchable, and visible in history.
+
+**Two people culling the same shoot in parallel** — one strict, one generous — costs you maybe 50 KB of commit rows. The photos themselves are shared.
+
+## What I'd push back on / things to lock in
+
+A couple of things I'd recommend before we go to code:
+
+**Skip the per-photo commit, batch them.** One commit per swipe means 2,000 photos = 2,000 commits, which makes the branch view unreadable. Better: every swipe is still appended individually, but the UI groups them visually ("you made 47 decisions in this session") and gives you one undo-button for the session as well as per-decision undo. Cheap to do, much nicer UX.
+
+**Group decisions are atomic.** When you mark "best of group," it's *one* commit with payload `{best: 42, auto_reject: [43,44,45]}`, not four commits. Undoing it undoes the whole group decision. This matches what you'd intuitively want.
+
+**Branches are cheap; encourage them.** The UI should suggest creating a branch before any "drastic" operation (mass rejection, restoring 50+ photos), the way an IDE prompts to commit before a risky refactor.
+
+## Ready for code?
+
+Next up I'd put together a runnable skeleton:
+
+- FastAPI backend with the four-table schema, the replay engine, and endpoints for import / decide / branch / restore / export
+- React frontend with the Cull screen (keyboard + drag swipe), Branches tree, and Library importer
+- A throwaway sample of ~30 JPEGs so you can run it end-to-end immediately
+
+Want me to build that as a working prototype you can run locally? Or do you want to iterate on the design first — for example, sketch the Cull screen UI, or work through the export flow in more detail?

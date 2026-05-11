@@ -1,0 +1,16 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+.photocull.db
+
+# Node
+node_modules/
+dist/
+.env
+
+# MacOS
+.DS_Store
+
+# App specific
+.photocull/
