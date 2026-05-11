@@ -1,27 +1,45 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
+/* --------------------------------------------------------------------------
+ * Theme — inspired by nextjs.org. Near-black surfaces, monochrome with a
+ * single blue accent for interactive state, and Vercel-style primary
+ * buttons (white fill, black text).
+ * -------------------------------------------------------------------------- */
 :root {
-  --bg-primary: #0f172a;
-  --bg-secondary: #1e293b;
-  --bg-glass: rgba(30, 41, 59, 0.7);
-  --bg-glass-border: rgba(255, 255, 255, 0.1);
-  
-  --text-primary: #f8fafc;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
-  
-  --accent-primary: #3b82f6;
-  --accent-hover: #60a5fa;
-  --accent-keep: #10b981;
-  --accent-reject: #ef4444;
+  /* Surfaces */
+  --bg-primary: #000000;
+  --bg-secondary: #0a0a0a;
+  --bg-elevated: #111111;
+  --bg-elevated-hover: #161616;
+  --bg-glass: rgba(20, 20, 20, 0.6);
+  --bg-glass-border: rgba(255, 255, 255, 0.10);
+  --bg-glass-border-strong: rgba(255, 255, 255, 0.18);
+
+  /* Text */
+  --text-primary: #fafafa;
+  --text-secondary: #a1a1aa;
+  --text-muted: #71717a;
+
+  /* Accents */
+  --accent-primary: #0070f3;       /* Vercel blue — interactive */
+  --accent-primary-hover: #339cff;
+  --accent-primary-soft: rgba(0, 112, 243, 0.18);
+  --accent-keep: #22c55e;
+  --accent-reject: #f43f5e;
   --accent-skip: #f59e0b;
-  
-  --border-radius-sm: 8px;
-  --border-radius-md: 12px;
-  --border-radius-lg: 24px;
-  
-  --shadow-glass: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
-  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+
+  /* Geometry */
+  --border-radius-sm: 6px;
+  --border-radius-md: 8px;
+  --border-radius-lg: 12px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 14px 0 rgba(0, 0, 0, 0.5);
+  --shadow-glow: 0 0 0 1px rgba(255, 255, 255, 0.1);
+
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 * {
@@ -31,8 +49,7 @@
 }
 
 body {
-  margin: 0;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background-color: var(--bg-primary);
@@ -40,104 +57,460 @@ body {
   overflow: hidden;
   height: 100vh;
   width: 100vw;
+  letter-spacing: -0.01em;
 }
 
-/* Glassmorphism Utilities */
+/* --------------------------------------------------------------------------
+ * Surfaces
+ * -------------------------------------------------------------------------- */
 .glass-panel {
-  background: var(--bg-glass);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: var(--bg-secondary);
   border: 1px solid var(--bg-glass-border);
-  box-shadow: var(--shadow-glass);
+  box-shadow: var(--shadow-sm);
 }
 
 .glass-card {
-  background: var(--bg-glass);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  background: var(--bg-elevated);
   border: 1px solid var(--bg-glass-border);
-  border-radius: var(--border-radius-md);
+  border-radius: var(--border-radius-lg);
   padding: 1.5rem;
-  box-shadow: var(--shadow-glass);
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.15s ease, transform 0.15s ease;
 }
-
 .glass-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.45);
+  border-color: var(--bg-glass-border-strong);
 }
 
-/* Base UI Components */
+/* --------------------------------------------------------------------------
+ * Buttons — Next.js style. Default is an outlined ghost button.
+ * Primary is white fill / black text (the "Deploy" button).
+ * Inline styles in views still take precedence where they're set.
+ * -------------------------------------------------------------------------- */
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.5rem;
-  padding: 0.75rem 1.5rem;
+  gap: 0.45rem;
+  padding: 0.5rem 1rem;
   border-radius: var(--border-radius-sm);
   font-weight: 500;
-  font-size: 0.95rem;
+  font-size: 0.875rem;
+  line-height: 1;
   cursor: pointer;
-  transition: all 0.2s ease;
-  border: none;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+  border: 1px solid var(--bg-glass-border);
+  background: transparent;
+  color: var(--text-primary);
   outline: none;
+  white-space: nowrap;
+  font-family: inherit;
+}
+.btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--bg-glass-border-strong);
+}
+.btn:focus-visible {
+  box-shadow: 0 0 0 2px var(--bg-primary), 0 0 0 4px var(--accent-primary);
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .btn-primary {
-  background-color: var(--accent-primary);
-  color: white;
-  box-shadow: 0 4px 14px 0 rgba(59, 130, 246, 0.39);
+  background: var(--text-primary);
+  color: var(--bg-primary);
+  border-color: var(--text-primary);
+  font-weight: 600;
+}
+.btn-primary:hover:not(:disabled) {
+  background: #ffffff;
+  border-color: #ffffff;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.12);
 }
 
-.btn-primary:hover {
-  background-color: var(--accent-hover);
-  box-shadow: 0 6px 20px rgba(59, 130, 246, 0.23);
-}
-
+/* --------------------------------------------------------------------------
+ * Inputs
+ * -------------------------------------------------------------------------- */
 .input-field {
   width: 100%;
-  padding: 0.75rem 1rem;
+  padding: 0.6rem 0.85rem;
   border-radius: var(--border-radius-sm);
-  background-color: rgba(15, 23, 42, 0.6);
+  background-color: var(--bg-primary);
   border: 1px solid var(--bg-glass-border);
   color: var(--text-primary);
-  font-family: 'Inter', sans-serif;
-  transition: all 0.2s ease;
+  font-family: inherit;
+  font-size: 0.9rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
-
+.input-field::placeholder { color: var(--text-muted); }
 .input-field:focus {
   outline: none;
   border-color: var(--accent-primary);
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+  box-shadow: 0 0 0 3px var(--accent-primary-soft);
 }
 
-/* Animations */
+/* --------------------------------------------------------------------------
+ * Keyboard chips (for the cull-view legend)
+ * -------------------------------------------------------------------------- */
+kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  font-family: var(--font-mono);
+  font-size: 0.75em;
+  font-weight: 500;
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--bg-glass-border);
+  border-radius: 4px;
+  vertical-align: baseline;
+}
+
+/* --------------------------------------------------------------------------
+ * Misc utilities
+ * -------------------------------------------------------------------------- */
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
+.animate-fade-in { animation: fadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
 
-.animate-fade-in {
-  animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+@keyframes spin { to { transform: rotate(360deg); } }
+.lucide-spin { animation: spin 0.9s linear infinite; }
+
+/* --------------------------------------------------------------------------
+ * Layout — base (desktop). Mobile overrides live further down.
+ * -------------------------------------------------------------------------- */
+
+/* Header */
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.85rem 1.5rem;
+  z-index: 10;
+  border: none;
+  border-bottom: 1px solid var(--bg-glass-border);
+  flex-shrink: 0;
+  gap: 0.75rem;
 }
-
-/* Layout Utilities */
-.flex-center {
+.app-header-brand {
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 0.6rem;
+  font-weight: 600;
+  font-size: 0.95rem;
+  letter-spacing: -0.01em;
+}
+.app-header-nav {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.app-nav-link {
+  text-decoration: none;
+  background: transparent;
+  border-color: var(--bg-glass-border);
+  color: var(--text-secondary);
+}
+.app-nav-link.is-active {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--bg-glass-border-strong);
+  color: var(--text-primary);
+}
+.app-nav-cta {
+  text-decoration: none;
 }
 
-.flex-between {
+/* Generic page shell used by Gallery and Trash views */
+.page-shell {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 1rem 1.5rem;
+  gap: 0.75rem;
+  overflow: hidden;
+}
+
+/* Library */
+.lib-scroll {
+  height: 100%;
+  overflow-y: auto;
+  padding: 3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+  align-items: center;
+}
+.lib-column {
+  width: 100%;
+  max-width: 1000px;
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+.lib-two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2rem;
+}
+.lib-import-form {
+  display: flex;
+  gap: 1rem;
+}
+
+/* Gallery + Trash toolbars and grid */
+.gallery-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.6rem 0.9rem;
+  border-radius: var(--border-radius-md);
+  flex-shrink: 0;
+  flex-wrap: wrap;
 }
+.gallery-selection-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.9rem;
+  background: var(--accent-primary-soft);
+  border: 1px solid var(--accent-primary);
+  border-radius: var(--border-radius-sm);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.gallery-grid {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-auto-rows: 200px;
+  gap: 0.75rem;
+  align-content: start;
+  padding-right: 0.25rem;
+}
+
+/* Cull-view keyboard legend (desktop only) */
+.cull-keyboard-legend {
+  display: flex;
+}
+
+/* Cull-view HUD and on-stage controls — base (desktop) sizes. Mobile
+ * overrides live in the @media block below. */
+.cull-hud {
+  padding: 1rem 2rem;
+  gap: 1rem;
+  align-items: center;
+}
+.cull-hud-left { display: flex; gap: 0.5rem; }
+.cull-hud-right { display: flex; gap: 2rem; align-items: center; }
+.cull-hud-counter { font-weight: 600; }
+.cull-hud-keep { color: var(--accent-keep); font-weight: 700; }
+
+.cull-nav-btn { width: 48px; height: 48px; }
+.cull-nav-btn svg { width: 24px; height: 24px; }
+
+.cull-status-chip {
+  position: absolute;
+  top: 80px;
+  right: 24px;
+  z-index: 4;
+  padding: 0.45rem 0.85rem;
+  border-radius: var(--border-radius-lg);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-transform: capitalize;
+  pointer-events: none;
+}
+
+/* Cull-view bottom strip — photos of the active burst group. Shown on
+ * both desktop and mobile; tiles shrink on mobile via the media block. */
+.cull-burst-strip {
+  height: 160px;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--bg-glass-border);
+  display: flex;
+  align-items: center;
+  padding: 0 2rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  -webkit-overflow-scrolling: touch;
+}
+.cull-burst-item {
+  position: relative;
+  height: 120px;
+  min-width: 180px;
+  border-radius: var(--border-radius-sm);
+  overflow: hidden;
+  cursor: pointer;
+  border: 2px solid transparent;
+  opacity: 0.6;
+  transition: opacity 0.15s ease, border-color 0.15s ease;
+  flex-shrink: 0;
+}
+.cull-burst-item.is-active {
+  border: 3px solid var(--accent-primary);
+  opacity: 1;
+}
+
+/* --------------------------------------------------------------------------
+ * Mobile overrides ( ≤ 768px )
+ * -------------------------------------------------------------------------- */
+@media (max-width: 768px) {
+  /* Header — collapse text labels; show icons only. Logo text hides on
+   * very small screens so the nav doesn't overflow. */
+  .app-header { padding: 0.6rem 0.85rem; gap: 0.5rem; }
+  .app-nav-label { display: none; }
+  .app-header-nav .btn { padding: 0.5rem 0.65rem; }
+
+  /* Library */
+  .lib-scroll { padding: 1.25rem; gap: 1.25rem; }
+  .lib-column { gap: 1.25rem; }
+  .lib-two-col { grid-template-columns: 1fr; gap: 1rem; }
+  .lib-import-form { flex-direction: column; }
+  .lib-import-form .btn { width: 100%; }
+  .glass-card { padding: 1.1rem; }
+
+  /* Gallery / Trash page shell */
+  .page-shell { padding: 0.6rem 0.75rem; gap: 0.5rem; }
+  .gallery-toolbar { padding: 0.5rem 0.7rem; }
+  .gallery-selection-toolbar { padding: 0.5rem 0.7rem; }
+  .gallery-grid {
+    grid-template-columns: repeat(auto-fill, minmax(125px, 1fr));
+    grid-auto-rows: 140px;
+    gap: 0.45rem;
+  }
+
+  /* Cull — keyboard legend hidden; the rail + bottom strip switch happens
+   * in JSX (driven by useMediaQuery), not via CSS, so layout is independent
+   * of any CSS-only concerns. The HUD and on-stage controls scale down here. */
+  .cull-keyboard-legend { display: none; }
+
+  .cull-hud { padding: 0.55rem 0.65rem; gap: 0.5rem; }
+  .cull-hud-right { gap: 0.85rem; }
+  .cull-hud-counter { font-size: 0.85rem; }
+  .cull-hud-keep { font-size: 0.85rem; }
+  .cull-hud .btn { padding: 0.45rem 0.6rem; font-size: 0.8rem; }
+
+  .cull-nav-btn { width: 38px; height: 38px; }
+  .cull-nav-btn svg { width: 18px; height: 18px; }
+  .cull-nav-prev { left: 8px !important; }
+  .cull-nav-next { right: 8px !important; }
+
+  .cull-status-chip {
+    top: 56px;
+    right: 10px;
+    padding: 0.3rem 0.6rem;
+    font-size: 0.75rem;
+    border-radius: var(--border-radius-md);
+    gap: 0.3rem;
+  }
+
+  /* Burst strip — compact thumbs for narrow viewports. */
+  .cull-burst-strip {
+    height: 96px;
+    padding: 0 0.6rem;
+    gap: 0.35rem;
+  }
+  .cull-burst-item {
+    height: 80px;
+    min-width: 110px;
+  }
+}
+
+@media (max-width: 480px) {
+  /* Smallest phones — hide the "Back" / "Kept" word labels so just the icon
+   * and the number remain. */
+  .cull-hud-text { display: none; }
+}
+
+@media (max-width: 480px) {
+  /* Smallest phones — drop the brand wordmark so the nav owns the row. */
+  .app-header-brand-text { display: none; }
+  .app-header { padding: 0.5rem 0.65rem; }
+}
+
+.flex-center  { display: flex; align-items: center; justify-content: center; }
+.flex-between { display: flex; align-items: center; justify-content: space-between; }
 
 .app-container {
   display: flex;
   flex-direction: column;
   height: 100vh;
   width: 100vw;
-  background: radial-gradient(circle at 50% 0%, #1e293b 0%, #0f172a 70%);
+  background: var(--bg-primary);
+}
+
+/* --------------------------------------------------------------------------
+ * Cull-view right-rail group rows. Different in/out timings achieved by
+ * giving the base rule and :hover their own `transition` shorthand —
+ * whichever is active "wins" while the other state's transition applies
+ * when leaving. ~400ms hover delay so a stray cursor doesn't trigger
+ * the expansion.
+ * -------------------------------------------------------------------------- */
+.rail-group-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem;
+  border-radius: var(--border-radius-sm);
+  cursor: pointer;
+  overflow: hidden;
+  height: 72px;
+  flex-shrink: 0;
+  transition: height 1s cubic-bezier(0.4, 0, 0.2, 1), background 0.15s ease;
+}
+.rail-group-row:hover {
+  height: 220px;
+  background: var(--bg-elevated-hover);
+  transition: height 2s cubic-bezier(0.4, 0, 0.2, 1) 0.4s, background 0.15s ease;
+}
+
+.rail-group-thumb {
+  position: relative;
+  width: 60px;
+  height: 60px;
+  flex-shrink: 0;
+  border-radius: var(--border-radius-sm);
+  overflow: hidden;
+  background: var(--bg-elevated);
+  transition: width 1s cubic-bezier(0.4, 0, 0.2, 1),
+              height 1s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.rail-group-row:hover .rail-group-thumb {
+  width: 200px;
+  height: 200px;
+  transition: width 2s cubic-bezier(0.4, 0, 0.2, 1) 0.4s,
+              height 2s cubic-bezier(0.4, 0, 0.2, 1) 0.4s;
+}
+
+/* Stacked thumb images: the small strip thumb is always visible; the
+ * high-res 'main' thumb is only mounted after the first hover (so the rail
+ * doesn't preload 100+ large images), and fades in over the same delay
+ * as the row expansion so the swap looks deliberate. */
+.rail-thumb-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.rail-thumb-hover {
+  opacity: 0;
+  transition: opacity 1s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.rail-group-row:hover .rail-thumb-hover {
+  opacity: 1;
+  transition: opacity 2s cubic-bezier(0.4, 0, 0.2, 1) 0.4s;
 }

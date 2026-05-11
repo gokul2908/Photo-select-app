@@ -53,3 +53,9 @@ class Commit(CommitBase):
 class ExportRequest(BaseModel):
     branch_id: int
     destination_path: str
+
+class RegroupRequest(BaseModel):
+    photo_ids: List[int]
+
+class DeletePhotosRequest(BaseModel):
+    photo_ids: List[int]

@@ -10,6 +10,10 @@ export const AppProvider = ({ children }) => {
   const [branchState, setBranchState] = useState({});
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
+  const [commits, setCommits] = useState([]);
+  // Shared filter for Gallery and Cull — survives navigation between them
+  // (and back-button navigation) since it lives at the AppProvider level.
+  const [filter, setFilter] = useState('all');
 
   // Fetch initial data
   useEffect(() => {
@@ -36,13 +40,62 @@ export const AppProvider = ({ children }) => {
     init();
   }, []);
 
+  const refreshCommits = async (branchId) => {
+    const id = branchId ?? currentBranch;
+    if (!id) return;
+    try {
+      const res = await api.listCommits(id);
+      setCommits(res.data || []);
+    } catch (e) {
+      console.error('Failed to fetch commits', e);
+    }
+  };
+
   const selectBranch = async (branchId) => {
     setCurrentBranch(branchId);
     try {
-      const stateRes = await api.getBranchState(branchId);
+      const [stateRes, commitsRes] = await Promise.all([
+        api.getBranchState(branchId),
+        api.listCommits(branchId),
+      ]);
       setBranchState(stateRes.data || {});
+      setCommits(commitsRes.data || []);
     } catch (e) {
       console.error("Failed to fetch branch state", e);
+    }
+  };
+
+  const commitCurrentRejects = async () => {
+    if (!currentBranch) return null;
+    try {
+      const res = await api.commitRejects(currentBranch);
+      // Refresh state + commits so the UI reflects the trash overlay and the
+      // new entry in the commits list.
+      const [stateRes, commitsRes] = await Promise.all([
+        api.getBranchState(currentBranch),
+        api.listCommits(currentBranch),
+      ]);
+      setBranchState(stateRes.data || {});
+      setCommits(commitsRes.data || []);
+      return res.data;
+    } catch (e) {
+      console.error('Commit rejects failed', e);
+      return null;
+    }
+  };
+
+  const revertCommit = async (commitId) => {
+    if (!currentBranch) return;
+    try {
+      await api.revertCommit(commitId);
+      const [stateRes, commitsRes] = await Promise.all([
+        api.getBranchState(currentBranch),
+        api.listCommits(currentBranch),
+      ]);
+      setBranchState(stateRes.data || {});
+      setCommits(commitsRes.data || []);
+    } catch (e) {
+      console.error('Revert failed', e);
     }
   };
 
@@ -72,8 +125,9 @@ export const AppProvider = ({ children }) => {
     const groupPhotos = photos.filter(p => p.group_id === groupId);
     const rejectIds = groupPhotos.map(p => p.id).filter(id => id !== bestPhotoId);
 
-    // Optimistic update
-    const newState = { ...branchState, [bestPhotoId]: 'keep' };
+    // Optimistic update — 'best' is its own state value (rendered as a star).
+    // Downloads/exports still treat it as kept on the server side.
+    const newState = { ...branchState, [bestPhotoId]: 'best' };
     rejectIds.forEach(id => { newState[id] = 'reject'; });
     setBranchState(newState);
 
@@ -92,10 +146,87 @@ export const AppProvider = ({ children }) => {
     }
   };
 
+  const trashPhotos = async (ids) => {
+    if (!currentBranch || !ids || ids.length === 0) return;
+    setBranchState((prev) => {
+      const next = { ...prev };
+      for (const id of ids) next[id] = 'trash';
+      return next;
+    });
+    try {
+      await api.commitTrash(currentBranch, ids);
+    } catch (e) {
+      console.error('Trash commit failed', e);
+    }
+  };
+
+  const refreshPhotos = async () => {
+    try {
+      const res = await api.getPhotos();
+      setPhotos(res.data);
+    } catch (e) {
+      console.error('Failed to refresh photos', e);
+    }
+  };
+
+  const mergeIntoOneGroup = async (photoIds) => {
+    if (!photoIds || photoIds.length < 2) return;
+    try {
+      await api.mergeGroups(photoIds);
+      await refreshPhotos();
+    } catch (e) {
+      console.error('Merge failed', e);
+    }
+  };
+
+  const permanentlyDeletePhotos = async (ids) => {
+    if (!ids || ids.length === 0) return;
+    const idSet = new Set(ids);
+    // Optimistic: drop the photos and clear any branchState entries pointing
+    // at them so the UI updates immediately.
+    setPhotos((prev) => prev.filter((p) => !idSet.has(p.id)));
+    setBranchState((prev) => {
+      const next = { ...prev };
+      for (const id of ids) delete next[id];
+      return next;
+    });
+    try {
+      await api.permanentlyDelete(ids);
+    } catch (e) {
+      console.error('Permanent delete failed', e);
+      // On failure, resync from server so local state matches reality.
+      await refreshPhotos();
+    }
+  };
+
+  const restorePhotos = async (ids) => {
+    if (!currentBranch || !ids || ids.length === 0) return;
+    // Optimistic: remove the trash overlay locally. The underlying keep/reject
+    // is held server-side, so refetch to get it back.
+    setBranchState((prev) => {
+      const next = { ...prev };
+      for (const id of ids) {
+        if (next[id] === 'trash') delete next[id];
+      }
+      return next;
+    });
+    try {
+      await api.commitUntrash(currentBranch, ids);
+      const stateRes = await api.getBranchState(currentBranch);
+      setBranchState(stateRes.data || {});
+    } catch (e) {
+      console.error('Untrash commit failed', e);
+    }
+  };
+
   return (
     <AppContext.Provider value={{
-      photos, branches, currentBranch, branchState, currentIndex, isLoading,
-      setCurrentIndex, selectBranch, makeDecision, markBest, setPhotos, setBranches
+      photos, branches, currentBranch, branchState, currentIndex, isLoading, commits,
+      filter, setFilter,
+      setCurrentIndex, selectBranch, makeDecision, markBest, trashPhotos, restorePhotos,
+      mergeIntoOneGroup, refreshPhotos, permanentlyDeletePhotos,
+      commitCurrentRejects, revertCommit, refreshCommits,
+      setPhotos, setBranches,
     }}>
       {children}
     </AppContext.Provider>

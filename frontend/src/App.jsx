@@ -1,8 +1,10 @@
 import React from 'react';
 import { Routes, Route, Link, useLocation } from 'react-router-dom';
-import { Folder, Play, Layers } from 'lucide-react';
+import { Folder, Play, Layers, Grid, Trash2 } from 'lucide-react';
 import LibraryView from './views/LibraryView';
 import CullView from './views/CullView';
+import GalleryView from './views/GalleryView';
+import TrashView from './views/TrashView';
 import './index.css';
 
 function App() {
@@ -10,19 +12,37 @@ function App() {
 
   return (
     <div className="app-container">
-      {/* Premium Glass Header */}
+      {/* Header */}
       {location.pathname !== '/cull' && (
-        <header className="glass-panel" style={{ padding: '1rem 2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 10 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontWeight: 'bold', fontSize: '1.25rem' }}>
-            <Layers size={28} color="var(--accent-primary)" />
-            <span>Local Photo Culler</span>
-          </div>
-          <nav style={{ display: 'flex', gap: '1rem' }}>
-            <Link to="/" className="btn" style={{ background: location.pathname === '/' ? 'var(--bg-glass-border)' : 'transparent', color: 'white', textDecoration: 'none' }}>
-              <Folder size={18} /> Library
-            </Link>
-            <Link to="/cull" className="btn btn-primary" style={{ textDecoration: 'none' }}>
-              <Play size={18} /> Start Culling
+        <header className="app-header glass-panel">
+          <Link
+            to="/"
+            className="app-header-brand"
+            style={{ textDecoration: 'none', color: 'inherit', cursor: 'pointer' }}
+            aria-label="Go to Library"
+          >
+            <Layers size={20} />
+            <span className="app-header-brand-text">Photo Culler</span>
+          </Link>
+          <nav className="app-header-nav">
+            {[
+              { to: '/', label: 'Library', icon: Folder },
+              { to: '/gallery', label: 'Gallery', icon: Grid },
+              { to: '/trash', label: 'Trash', icon: Trash2 },
+            ].map(({ to, label, icon: Icon }) => {
+              const active = location.pathname === to;
+              return (
+                <Link
+                  key={to}
+                  to={to}
+                  className={`btn app-nav-link${active ? ' is-active' : ''}`}
+                >
+                  <Icon size={16} /> <span className="app-nav-label">{label}</span>
+                </Link>
+              );
+            })}
+            <Link to="/cull" className="btn btn-primary app-nav-cta">
+              <Play size={16} /> <span className="app-nav-label">Start Culling</span>
             </Link>
           </nav>
         </header>
@@ -32,6 +52,8 @@ function App() {
       <main style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
         <Routes>
           <Route path="/" element={<LibraryView />} />
+          <Route path="/gallery" element={<GalleryView />} />
+          <Route path="/trash" element={<TrashView />} />
           <Route path="/cull" element={<CullView />} />
         </Routes>
       </main>
