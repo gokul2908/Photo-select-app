@@ -180,13 +180,10 @@ if (CHECK_ONLY) {
 step('Starting servers');
 
 const pythonBin = venvBin('python');
-const backendInvocation = IS_MAC_ARM64
+const backendCommand = IS_MAC_ARM64
   ? `arch -arm64 ${quote(pythonBin)} -m uvicorn main:app --reload --port 8000`
   : `${quote(pythonBin)} -m uvicorn main:app --reload --port 8000`;
-
-const cd = IS_WINDOWS ? 'cd /d' : 'cd';
-const backendCmd = `${cd} ${quote(join(ROOT, 'backend'))} && ${backendInvocation}`;
-const frontendCmd = `${cd} ${quote(join(ROOT, 'frontend'))} && npm run dev`;
+const frontendCommand = 'npm run dev';
 
 function quote(p) {
   // Wrap in quotes if the path contains spaces; double-quotes work on
@@ -194,12 +191,33 @@ function quote(p) {
   return /\s/.test(p) ? `"${p}"` : p;
 }
 
-console.log(`  backend  → ${backendInvocation}`);
-console.log(`  frontend → npm run dev`);
+console.log(`  backend  → ${backendCommand}`);
+console.log(`  frontend → ${frontendCommand}`);
 console.log('');
 
-await streamRun(
-  'npx',
-  ['concurrently', '-n', 'backend,frontend', '-c', 'blue,magenta', backendCmd, frontendCmd],
-  ROOT,
+// concurrently exposes a programmatic API with per-command `cwd`, which
+// sidesteps every shell-dialect difference (cmd's `cd /d`, PowerShell's
+// `Set-Location`, bash's `cd`). Each child runs in the right directory
+// without us ever spawning a shell.
+const { default: concurrently } = await import('concurrently');
+const { result } = concurrently(
+  [
+    { name: 'backend',  command: backendCommand,  cwd: join(ROOT, 'backend')  },
+    { name: 'frontend', command: frontendCommand, cwd: join(ROOT, 'frontend') },
+  ],
+  {
+    prefix: 'name',
+    prefixColors: ['blue', 'magenta'],
+    killOthersOn: ['failure', 'success'],
+    restartTries: 0,
+  },
 );
+
+try {
+  await result;
+} catch (e) {
+  // Either child exited with a non-zero code or the user hit Ctrl+C.
+  // `result` rejects with the array of close events in both cases; we just
+  // surface a non-zero exit so CI / shell-loops notice.
+  process.exit(1);
+}
