@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { api } from '../api';
 import { useAppContext } from '../AppContext';
-import { HardDrive, RefreshCw, GitBranch, Play, Download, GitCommit, Undo2 } from 'lucide-react';
+import { HardDrive, RefreshCw, GitBranch, Play, Download, GitCommit, Undo2, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 function formatTimestamp(epochSeconds) {
@@ -15,7 +15,7 @@ function formatTimestamp(epochSeconds) {
 export default function LibraryView() {
   const {
     photos, branches, currentBranch, branchState, commits,
-    selectBranch, setPhotos, commitCurrentRejects, revertCommit,
+    selectBranch, setPhotos, commitCurrentRejects, revertCommit, deleteBranch,
   } = useAppContext();
   const keptCount = Object.values(branchState).filter((v) => v === 'keep' || v === 'best').length;
   const pendingRejectCount = useMemo(
@@ -45,6 +45,21 @@ export default function LibraryView() {
       await revertCommit(commitId);
     } finally {
       setRevertingId(null);
+    }
+  };
+
+  const handleDeleteBranch = async (e, branch) => {
+    e.stopPropagation(); // don't trigger the branch-select onClick on the row
+    const ok = window.confirm(
+      `Delete branch "${branch.name}"?\n\n` +
+        `All decisions and commits on this branch will be removed. Photos on ` +
+        `disk are never touched. This cannot be undone.`
+    );
+    if (!ok) return;
+    try {
+      await deleteBranch(branch.id);
+    } catch (err) {
+      window.alert(err.message || 'Could not delete the branch.');
     }
   };
   const [importPath, setImportPath] = useState('');
@@ -127,11 +142,40 @@ export default function LibraryView() {
                   display: 'flex',
                   justifyContent: 'space-between',
                   alignItems: 'center',
+                  gap: '0.5rem',
                   transition: 'border-color 0.15s ease, background 0.15s ease',
                 }}
               >
                 <span style={{ fontWeight: 500 }}>{b.name}</span>
-                {currentBranch === b.id && <span style={{ fontSize: '0.8rem', color: 'var(--accent-primary)' }}>Active</span>}
+                <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  {currentBranch === b.id && (
+                    <span style={{ fontSize: '0.8rem', color: 'var(--accent-primary)' }}>Active</span>
+                  )}
+                  <button
+                    onClick={(e) => handleDeleteBranch(e, b)}
+                    disabled={branches.length <= 1}
+                    aria-label={`Delete branch ${b.name}`}
+                    title={branches.length <= 1 ? 'Cannot delete the last branch' : `Delete branch ${b.name}`}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: branches.length <= 1 ? 'var(--text-muted)' : 'var(--text-secondary)',
+                      cursor: branches.length <= 1 ? 'not-allowed' : 'pointer',
+                      padding: 4,
+                      display: 'inline-flex',
+                      borderRadius: 6,
+                      opacity: branches.length <= 1 ? 0.4 : 1,
+                    }}
+                    onMouseEnter={(e) => {
+                      if (branches.length > 1) e.currentTarget.style.color = 'var(--accent-reject)';
+                    }}
+                    onMouseLeave={(e) => {
+                      if (branches.length > 1) e.currentTarget.style.color = 'var(--text-secondary)';
+                    }}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </span>
               </div>
             ))}
           </div>

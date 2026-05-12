@@ -2,7 +2,13 @@
 venv/
 __pycache__/
 *.pyc
-.photocull.db
+
+# Local SQLite — schema is recreated automatically by SQLAlchemy on first
+# server start via models.Base.metadata.create_all.
+photocull.db
+*.db-journal
+*.db-wal
+*.db-shm
 
 # Node
 node_modules/

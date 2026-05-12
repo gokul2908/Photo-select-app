@@ -12,12 +12,13 @@ export const api = {
 
   // Branches & State
   getBranches: () => axios.get(`${API_BASE}/branches`),
-  createBranch: (name, parentBranchId = null, parentCommitId = null) => 
-    axios.post(`${API_BASE}/branches`, { 
-      name, 
-      parent_branch_id: parentBranchId, 
-      parent_commit_id: parentCommitId 
+  createBranch: (name, parentBranchId = null, parentCommitId = null) =>
+    axios.post(`${API_BASE}/branches`, {
+      name,
+      parent_branch_id: parentBranchId,
+      parent_commit_id: parentCommitId
     }),
+  deleteBranch: (branchId) => axios.delete(`${API_BASE}/branches/${branchId}`),
   getBranchState: (branchId) => axios.get(`${API_BASE}/branches/${branchId}/state`),
 
   // Commits

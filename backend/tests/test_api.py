@@ -45,6 +45,54 @@ def test_thumbnail_400_for_invalid_size(client, db_session):
     assert r.status_code == 400
 
 
+def test_delete_branch_happy_path_cascades_commits(client, db_session):
+    a = _seed_photo(db_session, "/a.jpg", 1)
+    keep_id = client.post("/api/branches", json={"name": "keep"}).json()["id"]
+    drop_id = client.post("/api/branches", json={"name": "drop"}).json()["id"]
+    client.post("/api/commits", json={
+        "branch_id": drop_id, "action_type": "decide",
+        "payload": {"photo_id": a.id, "decision": "reject"},
+    })
+
+    r = client.delete(f"/api/branches/{drop_id}")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["deleted"] == drop_id
+    assert body["deleted_commits"] == 1
+
+    # Branch and its commits are gone; the other branch is untouched.
+    listed = client.get("/api/branches").json()
+    assert [b["id"] for b in listed] == [keep_id]
+    assert db_session.query(models.Commit).filter(models.Commit.branch_id == drop_id).count() == 0
+
+
+def test_delete_branch_refuses_last_remaining(client):
+    only_id = client.post("/api/branches", json={"name": "only"}).json()["id"]
+    r = client.delete(f"/api/branches/{only_id}")
+    assert r.status_code == 400
+    assert "last" in r.json()["detail"].lower()
+
+
+def test_delete_branch_refuses_when_forks_exist(client, db_session):
+    parent = client.post("/api/branches", json={"name": "parent"}).json()
+    # Forked child references parent via parent_branch_id.
+    child = models.Branch(name="child", parent_branch_id=parent["id"])
+    db_session.add(child)
+    db_session.commit()
+
+    r = client.delete(f"/api/branches/{parent['id']}")
+    assert r.status_code == 400
+    assert "forked" in r.json()["detail"].lower()
+
+
+def test_delete_branch_404_for_unknown(client):
+    # Two branches so the last-branch guard doesn't trip first.
+    client.post("/api/branches", json={"name": "a"})
+    client.post("/api/branches", json={"name": "b"})
+    r = client.delete("/api/branches/99999")
+    assert r.status_code == 404
+
+
 def test_branch_lifecycle(client):
     # Empty initially
     assert client.get("/api/branches").json() == []

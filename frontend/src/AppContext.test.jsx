@@ -17,6 +17,7 @@ const { mockApi } = vi.hoisted(() => ({
     commitRejects: vi.fn(),
     listCommits: vi.fn(),
     revertCommit: vi.fn(),
+    deleteBranch: vi.fn(),
   },
 }));
 
@@ -50,8 +51,10 @@ function Harness() {
       <button onClick={() => ctx.permanentlyDeletePhotos([1, 2])}>perma-delete-1-2</button>
       <button onClick={() => ctx.commitCurrentRejects()}>commit-rejects</button>
       <button onClick={() => ctx.revertCommit(7)}>revert-7</button>
+      <button onClick={() => ctx.deleteBranch(10)}>delete-active-branch</button>
       <div data-testid="photos-count">{ctx.photos.length}</div>
       <div data-testid="commits-count">{ctx.commits.length}</div>
+      <div data-testid="branches-count">{ctx.branches.length}</div>
     </div>
   );
 }
@@ -82,6 +85,7 @@ beforeEach(() => {
   mockApi.commitRejects.mockResolvedValue({ data: { id: 7, timestamp: 1234, photo_count: 2 } });
   mockApi.listCommits.mockResolvedValue({ data: [] });
   mockApi.revertCommit.mockResolvedValue({ data: {} });
+  mockApi.deleteBranch.mockResolvedValue({ data: { deleted: 1 } });
 });
 
 describe('AppContext bootstrap', () => {
@@ -135,6 +139,29 @@ describe('markBest', () => {
 
     expect(mockApi.commitBest).toHaveBeenCalledWith(10, 1, 1, [2]);
   });
+});
+
+describe('deleteBranch', () => {
+  it('calls the API and falls back to a remaining branch if the deleted one was active', async () => {
+    const user = userEvent.setup();
+    // After deletion, getBranches returns just the remaining one.
+    mockApi.getBranches
+      .mockResolvedValueOnce({ data: BRANCHES }) // initial
+      .mockResolvedValueOnce({ data: [{ id: 11, name: 'main', head_commit_id: null }] });
+    mockApi.getBranchState
+      .mockResolvedValueOnce({ data: {} }) // initial for branch 10
+      .mockResolvedValueOnce({ data: {} }); // after fallback to branch 11
+
+    await renderApp();
+    expect(screen.getByTestId('currentBranch')).toHaveTextContent('10');
+
+    await user.click(screen.getByText('delete-active-branch'));
+
+    expect(mockApi.deleteBranch).toHaveBeenCalledWith(10);
+    expect(screen.getByTestId('currentBranch')).toHaveTextContent('11');
+    expect(screen.getByTestId('branches-count')).toHaveTextContent('1');
+  });
+
 });
 
 describe('commits', () => {

@@ -172,6 +172,51 @@ def create_branch(branch: schemas.BranchCreate, db: Session = Depends(get_db)):
     db.refresh(db_branch)
     return db_branch
 
+@app.delete("/api/branches/{branch_id}")
+def delete_branch(branch_id: int, db: Session = Depends(get_db)):
+    """Delete a branch and all of its commits.
+
+    Refuses if it's the only branch, or if other branches have forked from it
+    (their parent_branch_id points here). Commits on this branch are wiped;
+    photo rows are never touched.
+    """
+    branch = db.query(models.Branch).filter(models.Branch.id == branch_id).first()
+    if not branch:
+        raise HTTPException(status_code=404, detail="Branch not found")
+
+    total = db.query(models.Branch).count()
+    if total <= 1:
+        raise HTTPException(status_code=400, detail="Cannot delete the last remaining branch")
+
+    forks = (
+        db.query(models.Branch)
+        .filter(models.Branch.parent_branch_id == branch_id)
+        .count()
+    )
+    if forks > 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot delete: {forks} branch(es) forked from this one",
+        )
+
+    # Clear branch's own FK pointers so the commits can be deleted without
+    # foreign-key constraint complaints (use_alter handles the cycle, but
+    # we still want a clean state).
+    branch.head_commit_id = None
+    branch.parent_commit_id = None
+    db.flush()
+
+    deleted_commits = (
+        db.query(models.Commit)
+        .filter(models.Commit.branch_id == branch_id)
+        .delete(synchronize_session=False)
+    )
+    db.delete(branch)
+    db.commit()
+
+    return {"deleted": branch_id, "deleted_commits": deleted_commits}
+
+
 @app.get("/api/branches/{branch_id}/state")
 def get_branch_state_endpoint(branch_id: int, db: Session = Depends(get_db)):
     state = state_engine.get_branch_state(db, branch_id)

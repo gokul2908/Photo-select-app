@@ -51,6 +51,33 @@ export const AppProvider = ({ children }) => {
     }
   };
 
+  const deleteBranch = async (branchId) => {
+    try {
+      await api.deleteBranch(branchId);
+    } catch (e) {
+      // 400 (last branch / has forks) or 404 — surface to the caller so
+      // the UI can show the message.
+      const msg = e?.response?.data?.detail || e.message || 'Delete failed';
+      console.error('Delete branch failed:', msg);
+      throw new Error(msg);
+    }
+    // Refresh the branch list. If the deleted one was active, fall back to
+    // 'main' (or the first remaining branch); otherwise keep the current.
+    const branchesRes = await api.getBranches();
+    setBranches(branchesRes.data);
+    if (currentBranch === branchId) {
+      const fallback =
+        branchesRes.data.find((b) => b.name === 'main') || branchesRes.data[0];
+      if (fallback) {
+        await selectBranch(fallback.id);
+      } else {
+        setCurrentBranch(null);
+        setBranchState({});
+        setCommits([]);
+      }
+    }
+  };
+
   const selectBranch = async (branchId) => {
     setCurrentBranch(branchId);
     try {
@@ -223,7 +250,7 @@ export const AppProvider = ({ children }) => {
     <AppContext.Provider value={{
       photos, branches, currentBranch, branchState, currentIndex, isLoading, commits,
       filter, setFilter,
-      setCurrentIndex, selectBranch, makeDecision, markBest, trashPhotos, restorePhotos,
+      setCurrentIndex, selectBranch, deleteBranch, makeDecision, markBest, trashPhotos, restorePhotos,
       mergeIntoOneGroup, refreshPhotos, permanentlyDeletePhotos,
       commitCurrentRejects, revertCommit, refreshCommits,
       setPhotos, setBranches,
