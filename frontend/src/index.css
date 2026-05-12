@@ -57,7 +57,11 @@ body {
   background-color: var(--bg-primary);
   color: var(--text-primary);
   overflow: hidden;
+  /* 100vh on mobile counts the address bar; the page ends up taller than the
+   * visible area and the bottom gets clipped. dvh shrinks with the chrome.
+   * vh stays as the fallback for browsers without dvh. */
   height: 100vh;
+  height: 100dvh;
   width: 100vw;
   letter-spacing: -0.01em;
 }
@@ -179,6 +183,44 @@ kbd {
 
 @keyframes spin { to { transform: rotate(360deg); } }
 .lucide-spin { animation: spin 0.9s linear infinite; }
+
+/* Decision stamp shown on the cull stage after each keep / reject / best /
+ * skip action. Pops in over ~0.2s, hangs for ~0.6s, fades out over the
+ * final ~0.2s of its 1s lifecycle. Animation duration matches the
+ * `setTimeout` in the JSX (1000ms) so the visual and the lock release
+ * line up. */
+@keyframes decision-stamp {
+  0%   { transform: translate(-50%, -50%) scale(0.6); opacity: 0; }
+  20%  { transform: translate(-50%, -50%) scale(1.06); opacity: 1; }
+  30%  { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+  80%  { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+  100% { transform: translate(-50%, -50%) scale(0.98); opacity: 0; }
+}
+.cull-decision-stamp {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 7;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 1.4rem 2rem;
+  border-radius: var(--border-radius-lg);
+  border: 3px solid;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  animation: decision-stamp 1s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+.cull-decision-stamp-label {
+  font-weight: 700;
+  font-size: 1.15rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
 
 /* --------------------------------------------------------------------------
  * Layout — base (desktop). Mobile overrides live further down.
@@ -449,6 +491,7 @@ kbd {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
   width: 100vw;
   background: var(--bg-primary);
 }

@@ -161,6 +161,13 @@ export default function CullView() {
   const location = useLocation();
   const railRef = useRef(null);
   const touchStartRef = useRef(null);
+  const [touchDelta, setTouchDelta] = useState({ dx: 0, dy: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  // Holds the just-decided photo for ~1s so the user sees a big confirmation
+  // stamp on the photo they acted on before the view advances. `null` when
+  // not confirming.
+  const [confirmation, setConfirmation] = useState(null);
+  const confirmationTimerRef = useRef(null);
   const isMobile = useMediaQuery('(max-width: 768px)');
   // Hidden by default on every viewport. The toggle button in the HUD opens
   // it; the X inside the rail (or the backdrop on mobile) closes it.
@@ -252,19 +259,58 @@ export default function CullView() {
   const goPrev = useCallback(() => stepBy(-1), [stepBy]);
   const goNext = useCallback(() => stepBy(1), [stepBy]);
 
+  // Single entry point for every decision. Locks the visible photo to the
+  // one being decided on, stamps the big confirmation overlay for ~1s, then
+  // releases the lock so the view shows the next photo. AppContext does its
+  // optimistic state update + API call right away, so the underlying truth
+  // and the displayed truth stay aligned the moment the lock releases.
+  const triggerDecision = useCallback((kind) => {
+    if (!activePhoto || confirmation) return;  // ignore re-triggers while confirming
+    const photo = activePhoto;
+    setConfirmation({ photoId: photo.id, decision: kind });
+    if (confirmationTimerRef.current) clearTimeout(confirmationTimerRef.current);
+    confirmationTimerRef.current = setTimeout(() => {
+      setConfirmation(null);
+      confirmationTimerRef.current = null;
+    }, 1000);
+    if (kind === 'best') markBest(photo.group_id, photo.id);
+    else makeDecision(photo.id, kind);
+  }, [activePhoto, confirmation, makeDecision, markBest]);
+
+  // Cleanup the confirmation timer if the user navigates away mid-stamp.
+  useEffect(() => () => {
+    if (confirmationTimerRef.current) clearTimeout(confirmationTimerRef.current);
+  }, []);
+
   // Swipe gestures on the main stage:
   //   right → keep, left → reject, up → mark best, down → skip.
-  // Picks the dominant axis; taps (movement < threshold) fall through so the
-  // Prev/Next buttons underneath keep working.
+  // Tracks live deltas so the photo follows the finger, then either snaps
+  // back (under threshold) or flies off-screen and commits (past threshold).
+  // Taps (zero / tiny movement) fall through so the Prev/Next buttons
+  // underneath keep working.
   const handleTouchStart = useCallback((e) => {
     const t = e.touches[0];
     if (!t) return;
     touchStartRef.current = { x: t.clientX, y: t.clientY };
+    setIsDragging(true);
+    setTouchDelta({ dx: 0, dy: 0 });
+  }, []);
+
+  const handleTouchMove = useCallback((e) => {
+    const start = touchStartRef.current;
+    if (!start) return;
+    const t = e.touches[0];
+    if (!t) return;
+    setTouchDelta({ dx: t.clientX - start.x, dy: t.clientY - start.y });
   }, []);
 
   const handleTouchEnd = useCallback((e) => {
     const start = touchStartRef.current;
     touchStartRef.current = null;
+    setIsDragging(false);
+    // Snap back to center regardless — the big confirmation overlay (not the
+    // swipe transform) is what carries the visual feedback now.
+    setTouchDelta({ dx: 0, dy: 0 });
     if (!start || !activePhoto) return;
     const t = e.changedTouches[0];
     if (!t) return;
@@ -272,27 +318,22 @@ export default function CullView() {
     const dy = t.clientY - start.y;
     const ax = Math.abs(dx);
     const ay = Math.abs(dy);
-    if (Math.max(ax, ay) < SWIPE_THRESHOLD_PX) return; // tap, let click through
+    if (Math.max(ax, ay) < SWIPE_THRESHOLD_PX) return;  // tap
+
     if (ax > ay) {
-      if (dx > 0) makeDecision(activePhoto.id, 'keep');
-      else makeDecision(activePhoto.id, 'reject');
+      triggerDecision(dx > 0 ? 'keep' : 'reject');
     } else {
-      if (dy < 0) markBest(activePhoto.group_id, activePhoto.id);
-      else makeDecision(activePhoto.id, 'skip');
+      triggerDecision(dy < 0 ? 'best' : 'skip');
     }
-  }, [activePhoto, makeDecision, markBest]);
+  }, [activePhoto, triggerDecision]);
 
   const handleKeyDown = useCallback((e) => {
     if (!activePhoto) return;
     switch (e.key) {
-      case 'ArrowRight':
-        makeDecision(activePhoto.id, 'keep'); break;
-      case 'ArrowLeft':
-        makeDecision(activePhoto.id, 'reject'); break;
-      case 'ArrowDown':
-        makeDecision(activePhoto.id, 'skip'); break;
-      case 'ArrowUp':
-        markBest(activePhoto.group_id, activePhoto.id); break;
+      case 'ArrowRight': triggerDecision('keep'); break;
+      case 'ArrowLeft':  triggerDecision('reject'); break;
+      case 'ArrowDown':  triggerDecision('skip'); break;
+      case 'ArrowUp':    triggerDecision('best'); break;
       case ',':
       case '[':
         goPrev(); break;
@@ -303,7 +344,7 @@ export default function CullView() {
         goBack(); break;
       default: break;
     }
-  }, [activePhoto, makeDecision, markBest, goBack, goPrev, goNext]);
+  }, [activePhoto, triggerDecision, goBack, goPrev, goNext]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);
@@ -344,9 +385,59 @@ export default function CullView() {
     );
   }
 
-  const groupPhotos = filteredPhotos.filter((p) => p.group_id === activePhoto.group_id);
+  // While a confirmation stamp is showing, lock the displayed photo to the
+  // one we just decided on — even though AppContext has already advanced
+  // currentIndex behind the scenes — so the user sees the stamp on the
+  // photo they actually acted on.
+  const lockedPhoto = confirmation
+    ? photos.find((p) => p.id === confirmation.photoId) || activePhoto
+    : activePhoto;
+  const displayedPhoto = lockedPhoto;
+
+  const groupPhotos = filteredPhotos.filter((p) => p.group_id === displayedPhoto.group_id);
   const keeps = Object.values(branchState).filter((v) => v === 'keep' || v === 'best').length;
-  const visibleIndex = visiblePhotos.findIndex((p) => p.id === activePhoto.id);
+  const visibleIndex = visiblePhotos.findIndex((p) => p.id === displayedPhoto.id);
+
+  // While the user is dragging, figure out what photo to show in the gutter
+  // so it appears to slide in from the opposite side. Direction picks the
+  // axis-appropriate "next" — markBest jumps to the next group's first
+  // photo, the rest of the directions step to the next visible photo.
+  let previewPhoto = null;
+  let previewTransform = null;
+  if (!confirmation && (Math.abs(touchDelta.dx) > 4 || Math.abs(touchDelta.dy) > 4)) {
+    const ax = Math.abs(touchDelta.dx);
+    const ay = Math.abs(touchDelta.dy);
+    const horizontal = ax > ay;
+    if (horizontal) {
+      const next = visiblePhotos[visibleIndex + 1] || visiblePhotos[Math.max(0, visibleIndex - 1)] || null;
+      previewPhoto = next && next.id !== displayedPhoto.id ? next : null;
+      if (previewPhoto) {
+        const w = typeof window !== 'undefined' ? window.innerWidth : 1024;
+        // dx > 0 → swipe right → preview slides in from the LEFT (fills the
+        // void on the left as current photo moves right). Same logic mirrored
+        // for left swipe.
+        const tx = touchDelta.dx > 0 ? touchDelta.dx - w : touchDelta.dx + w;
+        previewTransform = `translate(${tx}px, 0)`;
+      }
+    } else {
+      // Vertical: up = best (jumps to first photo of next group), down = skip.
+      if (touchDelta.dy < 0) {
+        previewPhoto = photos.find(
+          (p, i) =>
+            i > photos.findIndex((x) => x.id === displayedPhoto.id) &&
+            p.group_id !== displayedPhoto.group_id &&
+            branchState[p.id] !== 'trash'
+        ) || null;
+      } else {
+        previewPhoto = visiblePhotos[visibleIndex + 1] || null;
+      }
+      if (previewPhoto) {
+        const h = typeof window !== 'undefined' ? window.innerHeight : 768;
+        const ty = touchDelta.dy > 0 ? touchDelta.dy - h : touchDelta.dy + h;
+        previewTransform = `translate(0, ${ty}px)`;
+      }
+    }
+  }
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'row', background: '#000' }}>
@@ -395,6 +486,7 @@ export default function CullView() {
         <div
           className="cull-stage"
           onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
           style={{ flex: 1, position: 'relative', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', touchAction: 'none' }}
         >
@@ -415,10 +507,45 @@ export default function CullView() {
             <ChevronLeft />
           </button>
 
+          {/* Preview of the upcoming photo, sliding in from the gutter as
+              the user drags. Sits behind the active photo via z-index. */}
+          {previewPhoto && previewTransform && (
+            <img
+              src={api.getThumbnailUrl(previewPhoto.id, 'main')}
+              alt=""
+              aria-hidden="true"
+              style={{
+                position: 'absolute',
+                maxWidth: '100%',
+                maxHeight: '100%',
+                objectFit: 'contain',
+                transform: previewTransform,
+                transition: isDragging ? 'none' : 'transform 0.22s cubic-bezier(0.4, 0, 0.2, 1)',
+                willChange: 'transform',
+                pointerEvents: 'none',
+                zIndex: 1,
+              }}
+            />
+          )}
+
           <img
-            src={api.getThumbnailUrl(activePhoto.id, 'main')}
+            src={api.getThumbnailUrl(displayedPhoto.id, 'main')}
             alt="Main Cull"
-            style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+            style={{
+              position: 'relative',
+              zIndex: 2,
+              maxWidth: '100%',
+              maxHeight: '100%',
+              objectFit: 'contain',
+              // Live follow-the-finger transform. The slight tilt only
+              // applies on horizontal motion when no preview is visible —
+              // a tilting card alongside a carousel preview looks chaotic.
+              transform: previewPhoto
+                ? `translate(${touchDelta.dx}px, ${touchDelta.dy}px)`
+                : `translate(${touchDelta.dx}px, ${touchDelta.dy}px) rotate(${touchDelta.dx * 0.04}deg)`,
+              transition: isDragging ? 'none' : 'transform 0.22s cubic-bezier(0.4, 0, 0.2, 1)',
+              willChange: 'transform, opacity',
+            }}
           />
 
           <button
@@ -438,18 +565,75 @@ export default function CullView() {
             <ChevronRight />
           </button>
 
-          {branchState[activePhoto.id] && (
+          {branchState[displayedPhoto.id] && (
             // Small status chip tucked just below the HUD so the photo subject
             // is never covered. Color + label make the state obvious at a glance.
             <div className="cull-status-chip" style={{
               background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(10px)',
-              color: STATUS_COLOR[branchState[activePhoto.id]] || 'var(--text-primary)',
-              border: `1px solid ${STATUS_COLOR[branchState[activePhoto.id]] || 'transparent'}`,
+              color: STATUS_COLOR[branchState[displayedPhoto.id]] || 'var(--text-primary)',
+              border: `1px solid ${STATUS_COLOR[branchState[displayedPhoto.id]] || 'transparent'}`,
             }}>
-              <StatusIcon status={branchState[activePhoto.id]} size={16} />
-              {branchState[activePhoto.id]}
+              <StatusIcon status={branchState[displayedPhoto.id]} size={16} />
+              {branchState[displayedPhoto.id]}
             </div>
           )}
+
+          {/* Decision stamp — appears for ~1s after a keep/reject/best/skip is
+              triggered (by key, swipe, or click). Locks the displayed photo
+              underneath via `displayedPhoto` so the stamp lands on the photo
+              the user actually decided on, even though currentIndex has
+              already advanced. */}
+          {confirmation && (
+            <div className="cull-decision-stamp" style={{
+              color: STATUS_COLOR[confirmation.decision] || 'var(--text-primary)',
+              borderColor: STATUS_COLOR[confirmation.decision] || 'var(--text-primary)',
+            }}>
+              <StatusIcon status={confirmation.decision} size={56} />
+              <div className="cull-decision-stamp-label">
+                {confirmation.decision === 'best' ? 'Marked best'
+                  : confirmation.decision === 'keep' ? 'Kept'
+                  : confirmation.decision === 'reject' ? 'Rejected'
+                  : confirmation.decision === 'skip' ? 'Skipped'
+                  : confirmation.decision}
+              </div>
+            </div>
+          )}
+
+          {/* Swipe-intent overlay — appears while dragging past a small
+              threshold so the user sees the decision their swipe will commit. */}
+          {(() => {
+            const HINT = 40;
+            const ax = Math.abs(touchDelta.dx);
+            const ay = Math.abs(touchDelta.dy);
+            if (Math.max(ax, ay) < HINT) return null;
+            let label, color;
+            if (ax > ay) {
+              if (touchDelta.dx > 0) { label = 'Keep'; color = STATUS_COLOR.keep; }
+              else { label = 'Reject'; color = STATUS_COLOR.reject; }
+            } else {
+              if (touchDelta.dy < 0) { label = 'Best'; color = STATUS_COLOR.best; }
+              else { label = 'Skip'; color = STATUS_COLOR.skip; }
+            }
+            const opacity = Math.min(1, (Math.max(ax, ay) - HINT) / 80);
+            return (
+              <div style={{
+                position: 'absolute', top: '50%', left: '50%',
+                transform: 'translate(-50%, -50%)',
+                padding: '0.6rem 1.4rem',
+                borderRadius: 999,
+                border: `2px solid ${color}`,
+                color, background: 'rgba(0,0,0,0.55)',
+                backdropFilter: 'blur(8px)',
+                fontWeight: 700, fontSize: '1.4rem',
+                textTransform: 'uppercase', letterSpacing: '0.08em',
+                opacity,
+                pointerEvents: 'none',
+                zIndex: 6,
+              }}>
+                {label}
+              </div>
+            );
+          })()}
         </div>
 
         {/* Bottom strip — photos of the currently selected burst group on both
@@ -459,7 +643,7 @@ export default function CullView() {
             <div
               key={p.id}
               onClick={() => setCurrentIndex(photos.findIndex((x) => x.id === p.id))}
-              className={`cull-burst-item${activePhoto.id === p.id ? ' is-active' : ''}`}
+              className={`cull-burst-item${displayedPhoto.id === p.id ? ' is-active' : ''}`}
             >
               <img
                 src={api.getThumbnailUrl(p.id, 'strip')}
@@ -589,7 +773,7 @@ export default function CullView() {
           }}
         >
           {groups.map((group) => {
-            const isActive = group.group_id === activePhoto.group_id;
+            const isActive = group.group_id === displayedPhoto.group_id;
             const summary = summarizeGroup(group, branchState);
             return (
               <div key={group.group_id} data-active={isActive ? 'true' : 'false'}>

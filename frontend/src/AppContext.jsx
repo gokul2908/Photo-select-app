@@ -24,11 +24,24 @@ export const AppProvider = ({ children }) => {
           api.getBranches()
         ]);
         setPhotos(photosRes.data);
-        setBranches(branchesRes.data);
-        
-        if (branchesRes.data.length > 0) {
-          // Select first branch or 'main' by default
-          const mainBranch = branchesRes.data.find(b => b.name === 'main') || branchesRes.data[0];
+        let branches = branchesRes.data;
+
+        // Fresh-clone path: empty branches table → create 'main' so the
+        // user can immediately make decisions without a manual setup step.
+        if (branches.length === 0) {
+          try {
+            const created = await api.createBranch('main');
+            branches = [created.data];
+          } catch (e) {
+            console.error('Failed to seed default branch', e);
+          }
+        }
+
+        setBranches(branches);
+
+        if (branches.length > 0) {
+          // Prefer 'main' if it exists; otherwise the first branch.
+          const mainBranch = branches.find((b) => b.name === 'main') || branches[0];
           await selectBranch(mainBranch.id);
         }
       } catch (error) {

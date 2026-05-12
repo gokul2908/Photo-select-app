@@ -1,12 +1,23 @@
-from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, UploadFile, File
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
+from pathlib import Path, PurePath
 from typing import List, Dict
+from PIL import Image, ImageOps
 import io
 import time
 import shutil
 import os
 import zipfile
+
+# Register HEIF/HEIC opener with Pillow (iPhone photos arrive as HEIC).
+# Optional — if the install failed for some reason, HEIC files just won't
+# open and the upload skips them gracefully.
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+except ImportError:
+    pass
 
 from database import SessionLocal, engine, Base
 import models
@@ -50,6 +61,114 @@ def get_import_status():
     # Placeholder for actual status tracking.
     # To implement fully, indexer.py would need to write its progress to a global var or DB.
     return {"status": "ok", "message": "Import runs in background."}
+
+# Drag-and-drop uploads land here. Files are saved to a fresh timestamped
+# batch directory under the user's home so the working copies live alongside
+# their other photo folders, then the existing indexer is kicked off.
+UPLOADS_ROOT = Path.home() / "Pictures" / "photo-culler-uploads"
+
+
+def _save_as_jpeg(src_bytes: bytes, dest_path: Path) -> bool:
+    """Open arbitrary image bytes with Pillow and write a JPEG to dest_path.
+
+    Returns True on success. Handles RGBA/LA/P modes by compositing on white
+    (JPEG has no alpha). Preserves EXIF when present so the indexer's
+    orientation fix still works.
+    """
+    try:
+        with Image.open(io.BytesIO(src_bytes)) as img:
+            img.load()
+            exif = img.info.get("exif", b"")
+            if img.mode in ("RGBA", "LA"):
+                bg = Image.new("RGB", img.size, (255, 255, 255))
+                bg.paste(img, mask=img.split()[-1])
+                out = bg
+            elif img.mode == "P":
+                out = img.convert("RGBA")
+                bg = Image.new("RGB", out.size, (255, 255, 255))
+                bg.paste(out, mask=out.split()[-1])
+                out = bg
+            elif img.mode != "RGB":
+                out = img.convert("RGB")
+            else:
+                out = img
+            out.save(dest_path, "JPEG", quality=92, exif=exif)
+        return True
+    except Exception as e:
+        print(f"Could not convert image to JPEG: {e}")
+        return False
+
+
+@app.post("/api/library/upload")
+async def upload_photos(files: List[UploadFile] = File(...)):
+    """Accept any image format; convert anything non-JPEG to JPEG so the
+    rest of the pipeline (which is JPEG-only) can index it. Non-image
+    drops are skipped, not errored, so a stray PDF in a folder of photos
+    doesn't fail the whole upload.
+    """
+    if not files:
+        raise HTTPException(status_code=400, detail="No files uploaded")
+
+    target_dir = UPLOADS_ROOT / f"batch-{int(time.time())}"
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    saved = 0
+    converted = 0
+    skipped = 0
+
+    for f in files:
+        if not f.filename:
+            skipped += 1
+            continue
+        # Read once into memory; we may need to inspect it twice (header
+        # check + write/convert).
+        data = await f.read()
+        if not data:
+            skipped += 1
+            continue
+
+        stem = PurePath(f.filename).stem or "image"
+        ext = PurePath(f.filename).suffix.lower()
+        dest = target_dir / f"{stem}.jpg"
+        # Disambiguate so two PNGs named "screenshot" don't collide as
+        # "screenshot.jpg".
+        n = 1
+        while dest.exists():
+            dest = target_dir / f"{stem}_{n}.jpg"
+            n += 1
+
+        # Fast path: real JPEGs go through as bytes (preserves EXIF exactly,
+        # no re-encode loss).
+        is_jpeg_ext = ext in (".jpg", ".jpeg")
+        is_jpeg_magic = len(data) >= 3 and data[:3] == b"\xff\xd8\xff"
+        if is_jpeg_ext and is_jpeg_magic:
+            with open(dest, "wb") as out:
+                out.write(data)
+            saved += 1
+            continue
+
+        # Anything else: try to open + convert via Pillow.
+        if _save_as_jpeg(data, dest):
+            saved += 1
+            converted += 1
+        else:
+            skipped += 1
+
+    if saved == 0:
+        try:
+            target_dir.rmdir()
+        except OSError:
+            pass
+        raise HTTPException(status_code=400, detail="No usable images in upload")
+
+    indexer.start_import(str(target_dir))
+    return {
+        "saved": saved,
+        "skipped": skipped,
+        "converted": converted,
+        "directory": str(target_dir),
+    }
+
 
 @app.post("/api/library/regenerate-thumbnails")
 def regenerate_thumbnails(db: Session = Depends(get_db)):
@@ -363,18 +482,40 @@ def create_commit(commit: schemas.CommitCreate, db: Session = Depends(get_db)):
     return db_commit
 
 @app.get("/api/branches/{branch_id}/download")
-def download_kept(branch_id: int, db: Session = Depends(get_db)):
-    """Stream a ZIP of every photo currently in 'keep' state for the branch."""
+def download_filtered(branch_id: int, filter: str = "keep", db: Session = Depends(get_db)):
+    """Stream a ZIP of photos matching the given filter on the branch.
+
+    `filter` is one of: all, keep (default — keep + best), best, reject,
+    skip, undecided. Trashed photos are never included.
+    """
     branch = db.query(models.Branch).filter(models.Branch.id == branch_id).first()
     if not branch:
         raise HTTPException(status_code=404, detail="Branch not found")
 
     state = state_engine.get_branch_state(db, branch_id)
-    keep_ids = [pid for pid, decision in state.items() if decision in ("keep", "best")]
-    if not keep_ids:
-        raise HTTPException(status_code=404, detail="No kept photos to download")
+    all_photos = db.query(models.Photo).all()
 
-    photos = db.query(models.Photo).filter(models.Photo.id.in_(keep_ids)).all()
+    if filter == "all":
+        photos = [p for p in all_photos if state.get(p.id) != "trash"]
+    elif filter == "undecided":
+        photos = [p for p in all_photos if p.id not in state]
+    elif filter == "keep":
+        ids = {pid for pid, d in state.items() if d in ("keep", "best")}
+        photos = [p for p in all_photos if p.id in ids]
+    elif filter in ("best", "reject", "skip"):
+        ids = {pid for pid, d in state.items() if d == filter}
+        photos = [p for p in all_photos if p.id in ids]
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown filter '{filter}'")
+
+    if not photos:
+        raise HTTPException(status_code=404, detail=f"No photos in the '{filter}' section")
+
+    # Drop trashed photos for any filter that doesn't explicitly want them
+    # (only 'all' / 'undecided' could otherwise smuggle them in).
+    photos = [p for p in photos if state.get(p.id) != "trash"]
+    if not photos:
+        raise HTTPException(status_code=404, detail=f"No photos in the '{filter}' section")
 
     buffer = io.BytesIO()
     # ZIP_STORED — JPEGs are already compressed; deflate wouldn't help and
@@ -391,7 +532,7 @@ def download_kept(branch_id: int, db: Session = Depends(get_db)):
             arcname = base if count == 0 else f"{count}_{base}"
             zf.write(photo.absolute_path, arcname=arcname)
 
-    filename = f"kept-{branch.name}-{int(time.time())}.zip"
+    filename = f"{filter}-{branch.name}-{int(time.time())}.zip"
     return Response(
         content=buffer.getvalue(),
         media_type="application/zip",

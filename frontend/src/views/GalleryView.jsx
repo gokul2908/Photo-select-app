@@ -182,8 +182,18 @@ export default function GalleryView() {
 
   const handleDownload = () => {
     if (!currentBranch) return;
-    window.location.href = api.downloadKeptUrl(currentBranch);
+    window.location.href = api.downloadUrl(currentBranch, filter);
   };
+
+  // Count of photos that would be in the next download — varies by filter.
+  // Mirrors the backend's download-filter logic. Hooks must run on every
+  // render so this lives above any early returns.
+  const downloadCount = useMemo(() => {
+    if (filter === 'all') return photos.filter((p) => branchState[p.id] !== 'trash').length;
+    if (filter === 'undecided') return photos.filter((p) => !branchState[p.id]).length;
+    if (filter === 'keep') return photos.filter((p) => branchState[p.id] === 'keep' || branchState[p.id] === 'best').length;
+    return photos.filter((p) => branchState[p.id] === filter).length;
+  }, [photos, branchState, filter]);
 
   if (!photos.length) {
     return (
@@ -196,6 +206,15 @@ export default function GalleryView() {
 
   const selectionCount = selected.size;
   const keptTotal = Object.values(branchState).filter((v) => v === 'keep' || v === 'best').length;
+
+  const downloadLabel =
+    filter === 'all'       ? 'Download all' :
+    filter === 'keep'      ? 'Download kept' :
+    filter === 'best'      ? 'Download best' :
+    filter === 'reject'    ? 'Download rejected' :
+    filter === 'skip'      ? 'Download skipped' :
+    filter === 'undecided' ? 'Download undecided' :
+    'Download';
 
   return (
     <div className="page-shell animate-fade-in">
@@ -229,7 +248,7 @@ export default function GalleryView() {
           </div>
           <button
             onClick={handleDownload}
-            disabled={!currentBranch || keptTotal === 0}
+            disabled={!currentBranch || downloadCount === 0}
             className="btn"
             style={{
               padding: '0.4rem 0.85rem',
@@ -239,9 +258,13 @@ export default function GalleryView() {
               color: '#062c17',
               fontWeight: 600,
             }}
-            title={keptTotal === 0 ? 'Mark some photos as kept first' : 'Download kept photos as ZIP'}
+            title={
+              !currentBranch ? 'Pick a branch first'
+                : downloadCount === 0 ? `Nothing in the "${filter}" section yet`
+                : `Download photos in the "${filter}" section as ZIP`
+            }
           >
-            <Download size={16} /> Download kept
+            <Download size={16} /> {downloadLabel} ({downloadCount})
           </button>
         </div>
       </div>

@@ -6,6 +6,7 @@ without disk I/O.
 """
 import io
 import zipfile
+from pathlib import Path
 
 from PIL import Image
 
@@ -179,6 +180,89 @@ def test_export_to_empty_branch_is_noop(client, tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
+def _encode(image_format, color=(255, 0, 0)):
+    buf = io.BytesIO()
+    Image.new("RGB", (10, 10), color).save(buf, image_format)
+    return buf.getvalue()
+
+
+def test_upload_passes_jpegs_through_and_converts_others(client, monkeypatch, tmp_path):
+    # Point the upload root at a temp dir so we don't touch ~/Pictures.
+    import main
+    monkeypatch.setattr(main, "UPLOADS_ROOT", tmp_path / "uploads")
+
+    captured = {}
+    monkeypatch.setattr(main.indexer, "start_import", lambda d: captured.setdefault("dir", d))
+
+    jpeg_bytes = _encode("JPEG")
+    png_bytes = _encode("PNG", color=(0, 255, 0))
+    bmp_bytes = _encode("BMP", color=(0, 0, 255))
+
+    files = [
+        ("files", ("a.jpg", jpeg_bytes, "image/jpeg")),
+        ("files", ("b.png", png_bytes, "image/png")),
+        ("files", ("c.bmp", bmp_bytes, "image/bmp")),
+        ("files", ("garbage.pdf", b"%PDF-1.4 not an image", "application/pdf")),
+    ]
+    r = client.post("/api/library/upload", files=files)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["saved"] == 3        # jpeg passthrough + png + bmp converted
+    assert body["converted"] == 2    # png + bmp re-encoded
+    assert body["skipped"] == 1      # pdf
+    assert captured["dir"] == body["directory"]
+
+    # All saved files end up as .jpg and are real JPEGs on disk.
+    written = sorted(Path(body["directory"]).iterdir())
+    assert [p.name for p in written] == ["a.jpg", "b.jpg", "c.jpg"]
+    for p in written:
+        with Image.open(p) as im:
+            assert im.format == "JPEG"
+
+
+def test_upload_preserves_jpeg_bytes_exactly(client, monkeypatch, tmp_path):
+    import main
+    monkeypatch.setattr(main, "UPLOADS_ROOT", tmp_path / "uploads")
+    monkeypatch.setattr(main.indexer, "start_import", lambda d: None)
+
+    jpeg_bytes = _encode("JPEG")
+    files = [("files", ("photo.jpg", jpeg_bytes, "image/jpeg"))]
+    r = client.post("/api/library/upload", files=files)
+    assert r.status_code == 200
+
+    written = next(Path(r.json()["directory"]).iterdir())
+    # Byte-for-byte identical — no re-encode loss.
+    assert written.read_bytes() == jpeg_bytes
+
+
+def test_upload_disambiguates_filenames_after_conversion(client, monkeypatch, tmp_path):
+    import main
+    monkeypatch.setattr(main, "UPLOADS_ROOT", tmp_path / "uploads")
+    monkeypatch.setattr(main.indexer, "start_import", lambda d: None)
+
+    png = _encode("PNG")
+    bmp = _encode("BMP")
+    # Both convert to "image.jpg"; second must be renamed.
+    files = [
+        ("files", ("image.png", png, "image/png")),
+        ("files", ("image.bmp", bmp, "image/bmp")),
+    ]
+    r = client.post("/api/library/upload", files=files)
+    assert r.status_code == 200
+    names = sorted(p.name for p in Path(r.json()["directory"]).iterdir())
+    assert names == ["image.jpg", "image_1.jpg"]
+
+
+def test_upload_rejects_when_nothing_is_an_image(client, monkeypatch, tmp_path):
+    import main
+    monkeypatch.setattr(main, "UPLOADS_ROOT", tmp_path / "uploads")
+    monkeypatch.setattr(main.indexer, "start_import", lambda d: None)
+
+    files = [("files", ("doc.pdf", b"%PDF-1.4", "application/pdf"))]
+    r = client.post("/api/library/upload", files=files)
+    assert r.status_code == 400
+
+
 def test_regenerate_thumbnails_endpoint_returns_counts(client):
     r = client.post("/api/library/regenerate-thumbnails")
     assert r.status_code == 200
@@ -295,6 +379,73 @@ def test_download_kept_404_when_no_kept_photos(client):
 def test_download_kept_404_for_unknown_branch(client):
     r = client.get("/api/branches/999/download")
     assert r.status_code == 404
+
+
+def test_download_with_filter_rejected(client, db_session, tmp_path):
+    keep_p = tmp_path / "keep.jpg"; _write_jpeg(keep_p, (255, 0, 0))
+    rej_p = tmp_path / "rej.jpg"; _write_jpeg(rej_p, (0, 0, 255))
+    db_session.add_all([
+        models.Photo(absolute_path=str(keep_p), content_hash="k"),
+        models.Photo(absolute_path=str(rej_p), content_hash="r"),
+    ])
+    db_session.commit()
+    photos = db_session.query(models.Photo).all()
+    keep_id = next(p.id for p in photos if p.absolute_path == str(keep_p))
+    rej_id = next(p.id for p in photos if p.absolute_path == str(rej_p))
+
+    branch_id = client.post("/api/branches", json={"name": "main"}).json()["id"]
+    client.post("/api/commits", json={"branch_id": branch_id, "action_type": "decide", "payload": {"photo_id": keep_id, "decision": "keep"}})
+    client.post("/api/commits", json={"branch_id": branch_id, "action_type": "decide", "payload": {"photo_id": rej_id, "decision": "reject"}})
+
+    r = client.get(f"/api/branches/{branch_id}/download?filter=reject")
+    assert r.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        names = zf.namelist()
+    assert names == ["rej.jpg"]
+
+
+def test_download_with_filter_undecided(client, db_session, tmp_path):
+    p1 = tmp_path / "decided.jpg"; _write_jpeg(p1, (1, 1, 1))
+    p2 = tmp_path / "untouched.jpg"; _write_jpeg(p2, (2, 2, 2))
+    db_session.add_all([
+        models.Photo(absolute_path=str(p1), content_hash="a"),
+        models.Photo(absolute_path=str(p2), content_hash="b"),
+    ])
+    db_session.commit()
+    ids = {p.absolute_path: p.id for p in db_session.query(models.Photo).all()}
+
+    branch_id = client.post("/api/branches", json={"name": "main"}).json()["id"]
+    client.post("/api/commits", json={"branch_id": branch_id, "action_type": "decide", "payload": {"photo_id": ids[str(p1)], "decision": "keep"}})
+
+    r = client.get(f"/api/branches/{branch_id}/download?filter=undecided")
+    assert r.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        names = zf.namelist()
+    assert names == ["untouched.jpg"]
+
+
+def test_download_with_filter_all_excludes_trash(client, db_session, tmp_path):
+    p1 = tmp_path / "live.jpg"; _write_jpeg(p1, (1, 1, 1))
+    p2 = tmp_path / "trashed.jpg"; _write_jpeg(p2, (2, 2, 2))
+    db_session.add_all([
+        models.Photo(absolute_path=str(p1), content_hash="a"),
+        models.Photo(absolute_path=str(p2), content_hash="b"),
+    ])
+    db_session.commit()
+    ids = {p.absolute_path: p.id for p in db_session.query(models.Photo).all()}
+
+    branch_id = client.post("/api/branches", json={"name": "main"}).json()["id"]
+    client.post("/api/commits", json={"branch_id": branch_id, "action_type": "decide", "payload": {"photo_id": ids[str(p1)], "decision": "keep"}})
+    client.post("/api/commits", json={"branch_id": branch_id, "action_type": "decide", "payload": {"photo_id": ids[str(p2)], "decision": "reject"}})
+    client.post("/api/commits", json={"branch_id": branch_id, "action_type": "trash", "payload": {"photo_ids": [ids[str(p2)]]}})
+
+    # 'all' filter should include the kept photo but skip the trashed one,
+    # PLUS include any undecided. With our setup, only "live.jpg" qualifies.
+    r = client.get(f"/api/branches/{branch_id}/download?filter=all")
+    assert r.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        names = zf.namelist()
+    assert names == ["live.jpg"]
 
 
 def _seed_photo(db, path, group_id):

@@ -15,7 +15,8 @@
  * Pass `--check` to run only the version + dependency checks (no launch).
  */
 import { spawn, execSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -153,7 +154,17 @@ async function ensureBackend() {
     console.log('  Creating Python virtualenv…');
     await streamRun(py.bin, ['-m', 'venv', 'venv'], join(ROOT, 'backend'));
   }
-  if (existsSync(venvBin('uvicorn')) && existsSync(venvBin('pytest'))) {
+  // Re-install when requirements.txt changes. The hash marker lives inside
+  // the venv so it auto-invalidates if the venv itself is wiped.
+  const reqPath = join(ROOT, 'backend', 'requirements.txt');
+  const markerPath = join(ROOT, 'backend', 'venv', '.requirements-hash');
+  const currentHash = createHash('sha256').update(readFileSync(reqPath)).digest('hex');
+  const cachedHash = existsSync(markerPath) ? readFileSync(markerPath, 'utf8').trim() : '';
+  const needInstall =
+    cachedHash !== currentHash ||
+    !existsSync(venvBin('uvicorn')) ||
+    !existsSync(venvBin('pytest'));
+  if (!needInstall) {
     ok('Backend packages already installed');
     return;
   }
@@ -164,6 +175,7 @@ async function ensureBackend() {
   } else {
     await streamRun(pip, ['install', '-r', 'requirements.txt'], join(ROOT, 'backend'));
   }
+  writeFileSync(markerPath, currentHash);
   ok('Backend packages installed');
 }
 
@@ -180,10 +192,14 @@ if (CHECK_ONLY) {
 step('Starting servers');
 
 const pythonBin = venvBin('python');
+// Bind to 0.0.0.0 so other devices on the LAN (phones, tablets) can hit
+// both servers. CORS is already wide-open in main.py for local dev.
 const backendCommand = IS_MAC_ARM64
-  ? `arch -arm64 ${quote(pythonBin)} -m uvicorn main:app --reload --port 8000`
-  : `${quote(pythonBin)} -m uvicorn main:app --reload --port 8000`;
-const frontendCommand = 'npm run dev';
+  ? `arch -arm64 ${quote(pythonBin)} -m uvicorn main:app --reload --host 0.0.0.0 --port 8000`
+  : `${quote(pythonBin)} -m uvicorn main:app --reload --host 0.0.0.0 --port 8000`;
+// `-- --host` forwards the flag to Vite past npm's arg parser; Vite then
+// binds to 0.0.0.0 and prints both Local and Network URLs at startup.
+const frontendCommand = 'npm run dev -- --host';
 
 function quote(p) {
   // Wrap in quotes if the path contains spaces; double-quotes work on

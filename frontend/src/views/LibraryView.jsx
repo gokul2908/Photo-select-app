@@ -1,7 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useRef } from 'react';
 import { api } from '../api';
 import { useAppContext } from '../AppContext';
-import { HardDrive, RefreshCw, GitBranch, Play, Download, GitCommit, Undo2, Trash2 } from 'lucide-react';
+import { HardDrive, RefreshCw, GitBranch, Play, Download, GitCommit, Undo2, Trash2, UploadCloud } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 function formatTimestamp(epochSeconds) {
@@ -16,14 +16,88 @@ export default function LibraryView() {
   const {
     photos, branches, currentBranch, branchState, commits,
     selectBranch, setPhotos, commitCurrentRejects, revertCommit, deleteBranch,
+    filter,
   } = useAppContext();
   const keptCount = Object.values(branchState).filter((v) => v === 'keep' || v === 'best').length;
+  const downloadCount = useMemo(() => {
+    if (filter === 'all') return photos.filter((p) => branchState[p.id] !== 'trash').length;
+    if (filter === 'undecided') return photos.filter((p) => !branchState[p.id]).length;
+    if (filter === 'keep') return photos.filter((p) => branchState[p.id] === 'keep' || branchState[p.id] === 'best').length;
+    return photos.filter((p) => branchState[p.id] === filter).length;
+  }, [photos, branchState, filter]);
+  const downloadLabel =
+    filter === 'all'       ? 'Download all' :
+    filter === 'keep'      ? 'Download kept' :
+    filter === 'best'      ? 'Download best' :
+    filter === 'reject'    ? 'Download rejected' :
+    filter === 'skip'      ? 'Download skipped' :
+    filter === 'undecided' ? 'Download undecided' :
+    'Download';
   const pendingRejectCount = useMemo(
     () => Object.values(branchState).filter((v) => v === 'reject').length,
     [branchState]
   );
   const [committing, setCommitting] = useState(false);
   const [revertingId, setRevertingId] = useState(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  // Once the bytes are fully uploaded the backend still has work to do
+  // (PNG/HEIC → JPEG conversion, writing to disk). `processing` covers
+  // that window so the UI keeps showing activity instead of a flat 100%.
+  const [processing, setProcessing] = useState(false);
+  const [uploadResult, setUploadResult] = useState(null);
+  const fileInputRef = useRef(null);
+
+  const handleFiles = async (fileList) => {
+    // Accept any image. The backend converts non-JPEGs (PNG / WebP / HEIC
+    // from iPhones / etc.) to JPEG before indexing.
+    const files = Array.from(fileList).filter((f) =>
+      /^image\//i.test(f.type) ||
+      /\.(jpe?g|png|gif|bmp|webp|tiff?|heic|heif|avif)$/i.test(f.name)
+    );
+    if (files.length === 0) {
+      setUploadResult({ error: 'No image files found in the drop.' });
+      return;
+    }
+    setUploading(true);
+    setProcessing(false);
+    setUploadProgress(0);
+    setUploadResult(null);
+    try {
+      const res = await api.uploadFiles(files, (e) => {
+        if (!e.total) return;
+        const pct = Math.round((e.loaded / e.total) * 100);
+        setUploadProgress(pct);
+        // Bytes are uploaded; the backend is now converting/saving.
+        if (pct >= 100) setProcessing(true);
+      });
+      setUploadResult(res.data);
+      // The backend kicks off indexing in a thread; poll once after a beat
+      // to refresh the indexed-photo count.
+      setTimeout(async () => {
+        const r = await api.getPhotos();
+        setPhotos(r.data);
+      }, 2500);
+    } catch (e) {
+      setUploadResult({ error: e?.response?.data?.detail || e.message || 'Upload failed' });
+    } finally {
+      setUploading(false);
+      setProcessing(false);
+    }
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setIsDragging(false);
+    if (e.dataTransfer?.files?.length) handleFiles(e.dataTransfer.files);
+  };
+  const handleDragOver = (e) => { e.preventDefault(); setIsDragging(true); };
+  const handleDragLeave = (e) => {
+    // Only flip off when leaving the drop-zone root, not a child element.
+    if (e.currentTarget.contains(e.relatedTarget)) return;
+    setIsDragging(false);
+  };
   const activeBranch = useMemo(
     () => branches.find((b) => b.id === currentBranch),
     [branches, currentBranch]
@@ -109,12 +183,12 @@ export default function LibraryView() {
 
       <div className="glass-card" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
         <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><HardDrive size={24}/> Import Photos</h2>
-        <p style={{ color: 'var(--text-secondary)' }}>Paste an absolute path to a folder containing JPEGs to start a new indexing job.</p>
-        
+        <p style={{ color: 'var(--text-secondary)' }}>Paste an absolute path to a folder containing JPEGs, or drop JPEG files directly below.</p>
+
         <form onSubmit={handleImport} className="lib-import-form">
-          <input 
-            type="text" 
-            className="input-field" 
+          <input
+            type="text"
+            className="input-field"
             placeholder="/Users/name/Pictures/Event"
             value={importPath}
             onChange={(e) => setImportPath(e.target.value)}
@@ -123,6 +197,95 @@ export default function LibraryView() {
             {isImporting ? <RefreshCw className="lucide-spin" size={18} /> : 'Import'}
           </button>
         </form>
+
+        {/* Drag-and-drop zone — uploads dropped JPEGs into
+            ~/Pictures/photo-culler-uploads/batch-<ts>/ and triggers the indexer. */}
+        <div
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onClick={() => !uploading && fileInputRef.current?.click()}
+          style={{
+            border: `2px dashed ${isDragging ? 'var(--accent-primary)' : 'var(--bg-glass-border)'}`,
+            background: isDragging ? 'var(--accent-primary-soft)' : 'transparent',
+            color: isDragging ? 'var(--text-primary)' : 'var(--text-secondary)',
+            padding: '1.5rem',
+            borderRadius: 'var(--border-radius-sm)',
+            textAlign: 'center',
+            cursor: uploading ? 'progress' : 'pointer',
+            transition: 'border-color 0.15s ease, background 0.15s ease',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '0.5rem',
+          }}
+        >
+          {uploading && processing ? (
+            <RefreshCw className="lucide-spin" size={28} />
+          ) : (
+            <UploadCloud size={28} />
+          )}
+          {!uploading && (
+            <>
+              <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Drop images here</div>
+              <div style={{ fontSize: '0.8rem' }}>
+                JPEG, PNG, HEIC, WebP, TIFF, BMP, GIF — non-JPEGs are converted automatically. …or click to pick files
+              </div>
+            </>
+          )}
+          {uploading && !processing && (
+            <>
+              <div style={{ fontWeight: 600 }}>Uploading… {uploadProgress}%</div>
+              <div style={{
+                width: '100%', maxWidth: 320, height: 4,
+                background: 'var(--bg-glass-border)', borderRadius: 4, overflow: 'hidden',
+              }}>
+                <div style={{
+                  width: `${uploadProgress}%`, height: '100%',
+                  background: 'var(--accent-primary)', transition: 'width 0.2s linear',
+                }} />
+              </div>
+            </>
+          )}
+          {uploading && processing && (
+            <>
+              <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Processing images…</div>
+              <div style={{ fontSize: '0.78rem' }}>
+                Converting non-JPEG formats and saving. A moment for large or HEIC drops.
+              </div>
+            </>
+          )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*,.heic,.heif,.avif"
+            multiple
+            style={{ display: 'none' }}
+            onChange={(e) => e.target.files && handleFiles(e.target.files)}
+          />
+        </div>
+
+        {uploadResult && uploadResult.error && (
+          <div style={{
+            background: 'rgba(244, 63, 94, 0.1)', border: '1px solid var(--accent-reject)',
+            color: 'var(--accent-reject)', padding: '0.5rem 0.85rem',
+            borderRadius: 'var(--border-radius-sm)', fontSize: '0.85rem',
+          }}>
+            {uploadResult.error}
+          </div>
+        )}
+        {uploadResult && !uploadResult.error && (
+          <div style={{
+            background: 'rgba(34, 197, 94, 0.1)', border: '1px solid var(--accent-keep)',
+            color: 'var(--accent-keep)', padding: '0.5rem 0.85rem',
+            borderRadius: 'var(--border-radius-sm)', fontSize: '0.85rem',
+          }}>
+            Uploaded {uploadResult.saved} photo{uploadResult.saved === 1 ? '' : 's'}
+            {uploadResult.converted > 0 ? ` (${uploadResult.converted} converted to JPEG)` : ''}
+            {uploadResult.skipped > 0 ? ` · ${uploadResult.skipped} skipped (not an image)` : ''}.
+            Indexing started; counts update shortly.
+          </div>
+        )}
       </div>
 
       <div className="lib-two-col">
@@ -193,13 +356,17 @@ export default function LibraryView() {
             <Play size={18}/> Jump to Cull Engine
           </button>
           <button
-            onClick={() => { if (currentBranch) window.location.href = api.downloadKeptUrl(currentBranch); }}
-            disabled={!currentBranch || keptCount === 0}
+            onClick={() => { if (currentBranch) window.location.href = api.downloadUrl(currentBranch, filter); }}
+            disabled={!currentBranch || downloadCount === 0}
             className="btn"
             style={{ width: '100%' }}
-            title={keptCount === 0 ? 'Mark some photos as kept first' : 'Download kept photos as ZIP'}
+            title={
+              !currentBranch ? 'Pick a branch first'
+                : downloadCount === 0 ? `Nothing in the "${filter}" section yet`
+                : `Download photos in the "${filter}" section as ZIP`
+            }
           >
-            <Download size={18}/> Download kept ({keptCount})
+            <Download size={18}/> {downloadLabel} ({downloadCount})
           </button>
         </div>
       </div>

@@ -6,3 +6,5 @@ exifread
 Pillow
 pytest
 httpx
+python-multipart
+pillow-heif
