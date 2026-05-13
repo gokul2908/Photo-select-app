@@ -308,24 +308,49 @@ export default function CullView() {
     const start = touchStartRef.current;
     touchStartRef.current = null;
     setIsDragging(false);
-    // Snap back to center regardless — the big confirmation overlay (not the
-    // swipe transform) is what carries the visual feedback now.
-    setTouchDelta({ dx: 0, dy: 0 });
-    if (!start || !activePhoto) return;
+    if (!start || !activePhoto) {
+      setTouchDelta({ dx: 0, dy: 0 });
+      return;
+    }
     const t = e.changedTouches[0];
-    if (!t) return;
+    if (!t) {
+      setTouchDelta({ dx: 0, dy: 0 });
+      return;
+    }
     const dx = t.clientX - start.x;
     const dy = t.clientY - start.y;
     const ax = Math.abs(dx);
     const ay = Math.abs(dy);
-    if (Math.max(ax, ay) < SWIPE_THRESHOLD_PX) return;  // tap
 
-    if (ax > ay) {
-      triggerDecision(dx > 0 ? 'keep' : 'reject');
-    } else {
-      triggerDecision(dy < 0 ? 'best' : 'skip');
+    if (Math.max(ax, ay) < SWIPE_THRESHOLD_PX) {
+      // Tap / under-threshold drag — snap back, no commit.
+      setTouchDelta({ dx: 0, dy: 0 });
+      return;
     }
-  }, [activePhoto, triggerDecision]);
+
+    // Past threshold: animate the swipe to completion (current photo all the
+    // way off-screen, preview slides in to center via the lockstep transform
+    // it shares with the active photo), then commit + advance with NO stamp.
+    // That keeps the mobile flow snappy — the slide IS the feedback.
+    const vw = typeof window !== 'undefined' ? window.innerWidth : 1024;
+    const vh = typeof window !== 'undefined' ? window.innerHeight : 768;
+    let decision;
+    let exitDx = 0;
+    let exitDy = 0;
+    if (ax > ay) {
+      decision = dx > 0 ? 'keep' : 'reject';
+      exitDx = dx > 0 ? vw : -vw;
+    } else {
+      decision = dy < 0 ? 'best' : 'skip';
+      exitDy = dy < 0 ? -vh : vh;
+    }
+    setTouchDelta({ dx: exitDx, dy: exitDy });
+    setTimeout(() => {
+      if (decision === 'best') markBest(activePhoto.group_id, activePhoto.id);
+      else makeDecision(activePhoto.id, decision);
+      setTouchDelta({ dx: 0, dy: 0 });
+    }, 220);
+  }, [activePhoto, makeDecision, markBest]);
 
   const handleKeyDown = useCallback((e) => {
     if (!activePhoto) return;
